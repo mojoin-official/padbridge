@@ -30,6 +30,16 @@ impl Default for PrintSink {
     }
 }
 
+/// Accepts every report and does nothing (test mode in the window app, which shows the live
+/// stick preview instead).
+pub struct NullSink;
+
+impl PadSink for NullSink {
+    fn submit(&mut self, _report: &Report) -> Result<(), String> {
+        Ok(())
+    }
+}
+
 pub fn format_report(r: &Report) -> String {
     format!(
         "buttons=0x{:04X} LT={:<3} RT={:<3} L=({:>6},{:>6}) R=({:>6},{:>6})",

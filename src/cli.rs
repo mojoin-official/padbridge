@@ -1,14 +1,15 @@
-use padbridge::app::{self, RunOptions};
+use padbridge::app::{self, RunOptions, Runtime};
 use padbridge::config::{Config, DEFAULT_CONFIG};
 use padbridge::keys;
 use padbridge::pad::{AxisTarget, Output};
 use std::path::{Path, PathBuf};
 
 const HELP: &str = "\
-padbridge - keyboard and mouse to a virtual Xbox 360 (XInput) controller
+padbridge-cli - keyboard and mouse to a virtual Xbox 360 (XInput) controller (console version;
+padbridge.exe is the window app)
 
 USAGE:
-    padbridge [OPTIONS]
+    padbridge-cli [OPTIONS]
 
 OPTIONS:
     -c, --config <FILE>      Use this configuration (default: ./bindings.toml, then the file
@@ -188,14 +189,28 @@ fn real_main() -> i32 {
     let opts = RunOptions {
         dry_run: cli.dry_run,
         sniff: cli.sniff,
+        print_reports: true,
     };
-    match app::run(cfg, opts) {
-        Ok(()) => 0,
+    let mut rt = match Runtime::start(&cfg, opts) {
+        Ok(rt) => rt,
         Err(e) => {
             eprintln!("error: {e}");
-            1
+            return 1;
         }
+    };
+    app::install_console_ctrl_handler(&rt);
+    let print = |lines: Vec<String>| {
+        for l in lines {
+            emit(&format!("[padbridge] {l}\n"));
+        }
+    };
+    while rt.is_running() {
+        print(rt.drain_log());
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
+    rt.stop();
+    print(rt.drain_log());
+    0
 }
 
 fn main() {

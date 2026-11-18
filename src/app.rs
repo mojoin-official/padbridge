@@ -1,35 +1,40 @@
 //! The Windows runtime: low-level hooks (to swallow bound input), Raw Input (for true mouse
 //! deltas), the message loop, and the fixed-rate output thread that feeds the virtual pad.
 //!
-//! Threads:
-//! * **main** - owns the hidden window, both hooks and the message loop. Hook callbacks run here
-//!   and must return quickly (Windows silently removes a hook that stalls), so they only take a
-//!   short mutex and never print or block.
+//! [`Runtime`] can be started, stopped and started again in one process, so both the console
+//! program and the window app drive it.
+//!
+//! Threads per running instance:
+//! * **mapping** - owns the hidden window, both hooks and the message loop. Hook callbacks run
+//!   here and must return quickly (Windows silently removes a hook that stalls), so they only
+//!   take a short mutex and never print or block. A GUI thread being busy never affects it.
 //! * **output** - ticks at `output_hz`, drains mouse deltas, asks the engine for a report and
 //!   submits it. Creates its own ViGEm connection so nothing needs to be `Send`.
-//! * **log** - prints notices and beeps, so slow console writes can never stall a hook.
+//! * **log** - turns notices into text lines and beeps, so slow consumers never stall a hook.
 
 use crate::capture::{Action, Edge};
 use crate::config::Config;
 use crate::engine::{describe, Engine};
 use crate::keys::{hook_key_id, MouseButton, Source};
 use crate::pad::Report;
-use crate::sink::{self, PadSink, PrintSink};
+use crate::sink::{self, NullSink, PadSink, PrintSink};
 use crate::sys::*;
 use std::mem::size_of;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU32, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex, MutexGuard, OnceLock};
+use std::sync::{mpsc, Arc, Mutex, MutexGuard, RwLock};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 #[derive(Copy, Clone, Debug, Default)]
 pub struct RunOptions {
-    /// Print reports instead of creating a virtual controller.
+    /// Do not create a virtual controller; reports are only computed (see `print_reports`).
     pub dry_run: bool,
-    /// Only print the name of every key/button pressed; map and swallow nothing.
+    /// Only report the name of every key/button pressed; map and swallow nothing.
     pub sniff: bool,
+    /// In a dry run, print every report to stdout (console program).
+    pub print_reports: bool,
 }
 
 enum Notice {
@@ -37,27 +42,34 @@ enum Notice {
     Exiting,
     Sniff(String),
     Warn(String),
+    Info(String),
     Stop,
 }
 
 struct Shared {
     engine: Mutex<Engine>,
-    /// Raw mouse counts accumulated by the message thread, drained by the output thread.
+    /// Raw mouse counts accumulated by the mapping thread, drained by the output thread.
     dx: AtomicI64,
     dy: AtomicI64,
     /// Self-diagnostic: mouse-move events the hook swallowed vs. Raw Input packets received.
     /// Swallowing moves while Raw Input delivers nothing means mouse->stick can never work.
     moves_swallowed: AtomicU64,
     raw_packets: AtomicU64,
+    /// Tells the output thread to finish.
     stop: AtomicBool,
+    /// True from start until the mapping thread has fully cleaned up.
+    running: AtomicBool,
+    /// Most recent report, for live previews.
+    last_report: Mutex<Report>,
     ignore_injected: bool,
     sniff: bool,
     notices: mpsc::Sender<Notice>,
 }
 
-static SHARED: OnceLock<Arc<Shared>> = OnceLock::new();
-static MAIN_THREAD_ID: AtomicU32 = AtomicU32::new(0);
-static CLEANED_UP: AtomicBool = AtomicBool::new(false);
+/// The instance the hook callbacks talk to. At most one at a time.
+static ACTIVE: RwLock<Option<Arc<Shared>>> = RwLock::new(None);
+static CTRL_THREAD_ID: AtomicU32 = AtomicU32::new(0);
+static CLEANED_UP: AtomicBool = AtomicBool::new(true);
 
 // Last absolute pointer position, for absolute devices (tablets, remote sessions).
 static ABS_VALID: AtomicBool = AtomicBool::new(false);
@@ -65,8 +77,12 @@ static ABS_X: AtomicI32 = AtomicI32::new(0);
 static ABS_Y: AtomicI32 = AtomicI32::new(0);
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    // A poisoned lock only means another thread panicked; the engine state is still usable.
+    // A poisoned lock only means another thread panicked; the state is still usable.
     m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn active() -> Option<Arc<Shared>> {
+    ACTIVE.read().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 fn announce(sh: &Shared, action: Option<Action>) {
@@ -76,6 +92,7 @@ fn announce(sh: &Shared, action: Option<Action>) {
         }
         Some(Action::Exit) => {
             let _ = sh.notices.send(Notice::Exiting);
+            // Hook callbacks run on the mapping thread, so this ends its message loop.
             unsafe { PostQuitMessage(0) };
         }
         None => {}
@@ -100,7 +117,7 @@ fn dispatch(sh: &Shared, src: Source, edge: Edge) -> bool {
 // ---------------------------------------------------------------------------------------------
 
 unsafe fn handle_key(wparam: WPARAM, lparam: LPARAM) -> bool {
-    let Some(sh) = SHARED.get() else { return false };
+    let Some(sh) = active() else { return false };
     let info = &*(lparam as *const KBDLLHOOKSTRUCT);
     if sh.ignore_injected && info.flags & LLKHF_INJECTED != 0 {
         return false;
@@ -113,16 +130,16 @@ unsafe fn handle_key(wparam: WPARAM, lparam: LPARAM) -> bool {
     let Some(id) = hook_key_id(info.vkCode, info.scanCode, info.flags) else {
         return false;
     };
-    dispatch(sh, Source::Key(id), edge)
+    dispatch(&sh, Source::Key(id), edge)
 }
 
 unsafe fn handle_mouse(wparam: WPARAM, lparam: LPARAM) -> bool {
-    let Some(sh) = SHARED.get() else { return false };
+    let Some(sh) = active() else { return false };
     let info = &*(lparam as *const MSLLHOOKSTRUCT);
     if sh.ignore_injected && info.flags & (LLMHF_INJECTED | LLMHF_LOWER_IL_INJECTED) != 0 {
         return false;
     }
-    let button = |b: MouseButton, edge: Edge| dispatch(sh, Source::Mouse(b), edge);
+    let button = |b: MouseButton, edge: Edge| dispatch(&sh, Source::Mouse(b), edge);
     let hi = info.mouseData >> 16;
     match wparam as u32 {
         WM_MOUSEMOVE => {
@@ -195,7 +212,7 @@ unsafe extern "system" fn mouse_proc(code: i32, wparam: WPARAM, lparam: LPARAM) 
 // ---------------------------------------------------------------------------------------------
 
 unsafe fn read_raw_mouse(lparam: LPARAM) {
-    let Some(sh) = SHARED.get() else { return };
+    let Some(sh) = active() else { return };
     // 8-byte aligned scratch space, comfortably larger than a mouse packet (48 bytes on x64).
     let mut buf = [0u64; 8];
     let mut size = size_of::<[u64; 8]>() as u32;
@@ -254,15 +271,8 @@ unsafe extern "system" fn wnd_proc(
 }
 
 // ---------------------------------------------------------------------------------------------
-// RAII guards (declared in the order they must be released, last declared dropped first)
+// RAII guards (dropped in reverse declaration order)
 // ---------------------------------------------------------------------------------------------
-
-struct CleanedFlag;
-impl Drop for CleanedFlag {
-    fn drop(&mut self) {
-        CLEANED_UP.store(true, Ordering::Release);
-    }
-}
 
 struct SingleInstance(HANDLE);
 impl SingleInstance {
@@ -275,7 +285,9 @@ impl SingleInstance {
         }
         if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
             unsafe { CloseHandle(handle) };
-            return Err("padbridge is already running in this session".to_string());
+            return Err(
+                "padbridge mapping is already running (another window or console?)".to_string(),
+            );
         }
         Ok(SingleInstance(handle))
     }
@@ -288,16 +300,21 @@ impl Drop for SingleInstance {
     }
 }
 
-struct LoggerGuard {
-    tx: mpsc::Sender<Notice>,
-    handle: Option<JoinHandle<()>>,
-}
-impl Drop for LoggerGuard {
-    fn drop(&mut self) {
-        let _ = self.tx.send(Notice::Stop);
-        if let Some(h) = self.handle.take() {
-            let _ = h.join();
+/// Publishes the instance to the hook callbacks, and withdraws it on drop.
+struct ActiveGuard;
+impl ActiveGuard {
+    fn publish(shared: &Arc<Shared>) -> Result<ActiveGuard, String> {
+        let mut slot = ACTIVE.write().unwrap_or_else(|e| e.into_inner());
+        if slot.is_some() {
+            return Err("mapping is already running".to_string());
         }
+        *slot = Some(Arc::clone(shared));
+        Ok(ActiveGuard)
+    }
+}
+impl Drop for ActiveGuard {
+    fn drop(&mut self) {
+        *ACTIVE.write().unwrap_or_else(|e| e.into_inner()) = None;
     }
 }
 
@@ -400,20 +417,22 @@ impl Drop for Ticker {
 // Threads
 // ---------------------------------------------------------------------------------------------
 
-fn logger_loop(rx: mpsc::Receiver<Notice>, beep: bool) {
+fn logger_loop(rx: mpsc::Receiver<Notice>, out: mpsc::Sender<String>, beep: bool) {
     while let Ok(n) = rx.recv() {
-        match n {
+        let line = match n {
             Notice::Toggled(on) => {
-                println!("[padbridge] {}", describe(Action::Toggled(on)));
                 if beep {
                     unsafe { Beep(if on { 880 } else { 440 }, 60) };
                 }
+                describe(Action::Toggled(on)).to_string()
             }
-            Notice::Exiting => println!("[padbridge] {}", describe(Action::Exit)),
-            Notice::Sniff(name) => println!("{name}"),
-            Notice::Warn(text) => eprintln!("[padbridge] warning: {text}"),
+            Notice::Exiting => describe(Action::Exit).to_string(),
+            Notice::Sniff(name) => name,
+            Notice::Warn(text) => format!("warning: {text}"),
+            Notice::Info(text) => text,
             Notice::Stop => break,
-        }
+        };
+        let _ = out.send(line);
     }
 }
 
@@ -424,11 +443,15 @@ const FAILSAFE_AFTER: Duration = Duration::from_millis(1500);
 fn output_thread(
     shared: Arc<Shared>,
     hz: u32,
-    dry_run: bool,
+    opts: RunOptions,
     ready: mpsc::Sender<Result<(), String>>,
 ) {
-    let mut sink: Box<dyn PadSink> = if dry_run {
-        Box::new(PrintSink::new())
+    let mut sink: Box<dyn PadSink> = if opts.dry_run {
+        if opts.print_reports {
+            Box::new(PrintSink::new())
+        } else {
+            Box::new(NullSink)
+        }
     } else {
         match sink::connect_vigem() {
             Ok(s) => s,
@@ -470,8 +493,8 @@ fn output_thread(
                 raw_warned = true;
                 let _ = shared.notices.send(Notice::Warn(
                     "the mouse is being captured but Raw Input is delivering no motion, so the \
-                     mouse cannot drive the stick on this system. Set swallow_motion = false in \
-                     [mouse] and report this."
+                     mouse cannot drive the stick on this system. Turn off 'Freeze the cursor' \
+                     on the Mouse to stick page and report this."
                         .to_string(),
                 ));
             }
@@ -487,6 +510,7 @@ fn output_thread(
         let dx = shared.dx.swap(0, Ordering::AcqRel);
         let dy = shared.dy.swap(0, Ordering::AcqRel);
         let report = lock(&shared.engine).step(elapsed, dx, dy);
+        *lock(&shared.last_report) = report;
 
         if report == sent && failing_since.is_none() {
             continue;
@@ -517,38 +541,12 @@ fn output_thread(
             }
         }
     }
+    *lock(&shared.last_report) = Report::default();
     let _ = sink.submit(&Report::default());
 }
 
-// ---------------------------------------------------------------------------------------------
-// Process plumbing
-// ---------------------------------------------------------------------------------------------
-
-unsafe extern "system" fn ctrl_handler(event: u32) -> BOOL {
-    match event {
-        CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT
-        | CTRL_SHUTDOWN_EVENT => {
-            let tid = MAIN_THREAD_ID.load(Ordering::Acquire);
-            if tid != 0 {
-                PostThreadMessageW(tid, WM_QUIT, 0, 0);
-            }
-            if event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT {
-                // Windows ends the process as soon as this handler returns for these events, so
-                // give the main thread a moment to unhook and unplug first.
-                for _ in 0..80 {
-                    if CLEANED_UP.load(Ordering::Acquire) {
-                        break;
-                    }
-                    thread::sleep(Duration::from_millis(50));
-                }
-            }
-            1
-        }
-        _ => 0,
-    }
-}
-
 unsafe fn create_window() -> Result<HWND, String> {
+    const ERROR_CLASS_ALREADY_EXISTS: u32 = 1410;
     let instance = GetModuleHandleW(null());
     let class = wide("padbridge.rawinput");
     let wc = WNDCLASSEXW {
@@ -565,7 +563,8 @@ unsafe fn create_window() -> Result<HWND, String> {
         lpszClassName: class.as_ptr(),
         hIconSm: null_mut(),
     };
-    if RegisterClassExW(&wc) == 0 {
+    // A second start in the same process finds the class already registered; that is fine.
+    if RegisterClassExW(&wc) == 0 && GetLastError() != ERROR_CLASS_ALREADY_EXISTS {
         return Err(format!(
             "RegisterClassExW failed (error {})",
             GetLastError()
@@ -604,54 +603,28 @@ unsafe fn create_window() -> Result<HWND, String> {
     Ok(hwnd)
 }
 
-/// Runs padbridge until the exit hotkey, Ctrl+C or console close. Windows only.
-pub fn run(cfg: Config, opts: RunOptions) -> Result<(), String> {
-    if !cfg!(windows) {
-        return Err("padbridge only runs on Windows".to_string());
-    }
-
-    let _cleaned = CleanedFlag;
+/// Body of the mapping thread. Sends `Ok(thread id)` on `ready` once input is being handled, or
+/// `Err` if setup fails. Returns when the message loop ends.
+fn run_mapping(
+    shared: &Arc<Shared>,
+    opts: RunOptions,
+    hz: u32,
+    ready: &mut Option<mpsc::Sender<Result<u32, String>>>,
+) -> Result<(), String> {
     let _instance = SingleInstance::acquire()?;
-
-    let (notice_tx, notice_rx) = mpsc::channel::<Notice>();
-    let beep = cfg.general.beep_on_toggle;
-    let logger = thread::Builder::new()
-        .name("padbridge-log".into())
-        .spawn(move || logger_loop(notice_rx, beep))
-        .map_err(|e| format!("could not start the log thread: {e}"))?;
-    let _logger = LoggerGuard {
-        tx: notice_tx.clone(),
-        handle: Some(logger),
-    };
-
-    let shared = Arc::new(Shared {
-        engine: Mutex::new(Engine::new(&cfg)),
-        dx: AtomicI64::new(0),
-        dy: AtomicI64::new(0),
-        moves_swallowed: AtomicU64::new(0),
-        raw_packets: AtomicU64::new(0),
-        stop: AtomicBool::new(false),
-        ignore_injected: cfg.general.ignore_injected,
-        sniff: opts.sniff,
-        notices: notice_tx,
-    });
-    SHARED
-        .set(Arc::clone(&shared))
-        .map_err(|_| "padbridge was already started in this process".to_string())?;
+    let _active = ActiveGuard::publish(shared)?;
 
     // The virtual controller (not needed to sniff key names).
     let mut _output = None;
     if !opts.sniff {
         let (ready_tx, ready_rx) = mpsc::channel();
-        let out_shared = Arc::clone(&shared);
-        let hz = cfg.general.output_hz;
-        let dry = opts.dry_run;
+        let out_shared = Arc::clone(shared);
         let handle = thread::Builder::new()
             .name("padbridge-output".into())
-            .spawn(move || output_thread(out_shared, hz, dry, ready_tx))
+            .spawn(move || output_thread(out_shared, hz, opts, ready_tx))
             .map_err(|e| format!("could not start the output thread: {e}"))?;
         let guard = OutputGuard {
-            shared: Arc::clone(&shared),
+            shared: Arc::clone(shared),
             handle: Some(handle),
         };
         match ready_rx.recv_timeout(Duration::from_secs(15)) {
@@ -662,12 +635,7 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<(), String> {
         _output = Some(guard);
     }
 
-    MAIN_THREAD_ID.store(unsafe { GetCurrentThreadId() }, Ordering::Release);
-    unsafe {
-        SetConsoleCtrlHandler(Some(ctrl_handler), 1);
-        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
-    }
-
+    unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST) };
     let hwnd = unsafe { create_window() }?;
     let _window = WindowGuard(hwnd);
 
@@ -689,24 +657,8 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<(), String> {
     }
     let _ms = HookGuard(ms);
 
-    if opts.sniff {
-        println!("[padbridge] sniff mode: press keys and mouse buttons to see their names. Ctrl+C quits.");
-    } else {
-        println!(
-            "[padbridge] running{}. mapping is {}. toggle: {}   exit: {}",
-            if opts.dry_run {
-                " (dry run, no controller)"
-            } else {
-                ""
-            },
-            if lock(&shared.engine).enabled() {
-                "ON"
-            } else {
-                "off"
-            },
-            cfg.general.toggle_hotkey,
-            cfg.general.exit_hotkey
-        );
+    if let Some(r) = ready.take() {
+        let _ = r.send(Ok(unsafe { GetCurrentThreadId() }));
     }
 
     let mut msg = MSG::zeroed();
@@ -726,6 +678,199 @@ pub fn run(cfg: Config, opts: RunOptions) -> Result<(), String> {
         }
     }
     // Guards now release in reverse order: hooks, window, output (neutral report + unplug),
-    // logger, instance mutex.
+    // published instance, instance mutex.
     Ok(())
+}
+
+/// A running mapping instance. Dropping it stops mapping and unplugs the controller.
+pub struct Runtime {
+    shared: Arc<Shared>,
+    thread: Option<JoinHandle<()>>,
+    thread_id: u32,
+    logger: Option<JoinHandle<()>>,
+    log_rx: mpsc::Receiver<String>,
+}
+
+impl Runtime {
+    /// Starts mapping with `cfg`. Returns once input is being captured, or with the reason it
+    /// could not start (for example, the ViGEmBus driver is missing).
+    pub fn start(cfg: &Config, opts: RunOptions) -> Result<Runtime, String> {
+        if !cfg!(windows) {
+            return Err("padbridge mapping only runs on Windows".to_string());
+        }
+
+        let (notice_tx, notice_rx) = mpsc::channel::<Notice>();
+        let (log_tx, log_rx) = mpsc::channel::<String>();
+        let beep = cfg.general.beep_on_toggle;
+        let logger = thread::Builder::new()
+            .name("padbridge-log".into())
+            .spawn(move || logger_loop(notice_rx, log_tx, beep))
+            .map_err(|e| format!("could not start the log thread: {e}"))?;
+
+        let shared = Arc::new(Shared {
+            engine: Mutex::new(Engine::new(cfg)),
+            dx: AtomicI64::new(0),
+            dy: AtomicI64::new(0),
+            moves_swallowed: AtomicU64::new(0),
+            raw_packets: AtomicU64::new(0),
+            stop: AtomicBool::new(false),
+            running: AtomicBool::new(true),
+            last_report: Mutex::new(Report::default()),
+            ignore_injected: cfg.general.ignore_injected,
+            sniff: opts.sniff,
+            notices: notice_tx,
+        });
+
+        let stop_logger = |shared: &Shared, logger: JoinHandle<()>| {
+            let _ = shared.notices.send(Notice::Stop);
+            let _ = logger.join();
+        };
+
+        let (ready_tx, ready_rx) = mpsc::channel::<Result<u32, String>>();
+        let th_shared = Arc::clone(&shared);
+        let hz = cfg.general.output_hz;
+        CLEANED_UP.store(false, Ordering::Release);
+        let thread = match thread::Builder::new()
+            .name("padbridge-mapping".into())
+            .spawn(move || {
+                let mut ready = Some(ready_tx);
+                let result = run_mapping(&th_shared, opts, hz, &mut ready);
+                match (result, ready.take()) {
+                    (Err(e), Some(r)) => {
+                        let _ = r.send(Err(e));
+                    }
+                    (Err(e), None) => {
+                        let _ = th_shared.notices.send(Notice::Warn(e));
+                    }
+                    _ => {}
+                }
+                th_shared.running.store(false, Ordering::Release);
+                CLEANED_UP.store(true, Ordering::Release);
+            }) {
+            Ok(t) => t,
+            Err(e) => {
+                CLEANED_UP.store(true, Ordering::Release);
+                stop_logger(&shared, logger);
+                return Err(format!("could not start the mapping thread: {e}"));
+            }
+        };
+
+        let failure = match ready_rx.recv_timeout(Duration::from_secs(20)) {
+            Ok(Ok(tid)) => {
+                let rt = Runtime {
+                    shared,
+                    thread: Some(thread),
+                    thread_id: tid,
+                    logger: Some(logger),
+                    log_rx,
+                };
+                let what = if opts.sniff {
+                    "sniff mode: press keys and mouse buttons to see their names".to_string()
+                } else {
+                    format!(
+                        "running{}. mapping is {}. toggle: {}   exit: {}",
+                        if opts.dry_run {
+                            " (test mode, no controller)"
+                        } else {
+                            ""
+                        },
+                        if rt.enabled() { "ON" } else { "off" },
+                        cfg.general.toggle_hotkey,
+                        cfg.general.exit_hotkey
+                    )
+                };
+                let _ = rt.shared.notices.send(Notice::Info(what));
+                return Ok(rt);
+            }
+            Ok(Err(e)) => e,
+            Err(_) => "timed out starting the mapping thread".to_string(),
+        };
+        let _ = thread.join();
+        stop_logger(&shared, logger);
+        Err(failure)
+    }
+
+    /// False once mapping has ended (exit hotkey, error, or [`stop`](Self::stop)).
+    pub fn is_running(&self) -> bool {
+        self.shared.running.load(Ordering::Acquire)
+    }
+
+    /// Whether input is currently being captured and mapped.
+    pub fn enabled(&self) -> bool {
+        lock(&self.shared.engine).enabled()
+    }
+
+    /// Turns capture on or off (same as the toggle hotkey).
+    pub fn set_enabled(&self, on: bool) {
+        lock(&self.shared.engine).set_enabled(on);
+        let _ = self.shared.notices.send(Notice::Toggled(on));
+    }
+
+    /// The report most recently produced (neutral when stopped or in sniff mode).
+    pub fn last_report(&self) -> Report {
+        *lock(&self.shared.last_report)
+    }
+
+    /// Log lines produced since the previous call.
+    pub fn drain_log(&self) -> Vec<String> {
+        self.log_rx.try_iter().collect()
+    }
+
+    pub fn thread_id(&self) -> u32 {
+        self.thread_id
+    }
+
+    /// Stops mapping, releases every key and unplugs the controller. Idempotent.
+    pub fn stop(&mut self) {
+        if let Some(t) = self.thread.take() {
+            if self.thread_id != 0 {
+                unsafe { PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0) };
+            }
+            let _ = t.join();
+        }
+        if let Some(l) = self.logger.take() {
+            let _ = self.shared.notices.send(Notice::Stop);
+            let _ = l.join();
+        }
+    }
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Console integration
+// ---------------------------------------------------------------------------------------------
+
+unsafe extern "system" fn ctrl_handler(event: u32) -> BOOL {
+    match event {
+        CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT
+        | CTRL_SHUTDOWN_EVENT => {
+            let tid = CTRL_THREAD_ID.load(Ordering::Acquire);
+            if tid != 0 {
+                PostThreadMessageW(tid, WM_QUIT, 0, 0);
+            }
+            if event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT {
+                // Windows ends the process as soon as this handler returns for these events, so
+                // give the mapping thread a moment to unhook and unplug first.
+                for _ in 0..80 {
+                    if CLEANED_UP.load(Ordering::Acquire) {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(50));
+                }
+            }
+            1
+        }
+        _ => 0,
+    }
+}
+
+/// Makes Ctrl+C and closing the console window stop `rt` cleanly (console program only).
+pub fn install_console_ctrl_handler(rt: &Runtime) {
+    CTRL_THREAD_ID.store(rt.thread_id(), Ordering::Release);
+    unsafe { SetConsoleCtrlHandler(Some(ctrl_handler), 1) };
 }

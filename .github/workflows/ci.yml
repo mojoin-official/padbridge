@@ -8,15 +8,70 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      # Build and publish the .exe first, so nothing below can block the download.
-      - run: cargo build --release
+        with:
+          components: clippy
+      # Build and publish the .exe files first, so nothing below can block the download.
+      - run: cargo build --release --bins
       - uses: actions/upload-artifact@v4
         with:
           name: padbridge-windows
           path: |
             target/release/padbridge.exe
+            target/release/padbridge-cli.exe
             bindings.toml
             README.md
       - name: tests
         run: cargo test
         continue-on-error: true
+      - name: lint (Windows code paths)
+        run: cargo clippy --all-targets
+        continue-on-error: true
+
+  # Builds the same app on Linux and photographs every page, so the layout can be checked
+  # without a Windows desktop. The pictures are pushed to the 'screenshots' branch.
+  screenshots:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: system packages
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q xvfb imagemagick libxkbcommon-x11-0 libxcursor1 \
+            libxrandr2 libxi6 libgl1-mesa-dri libegl1 libgl1
+      - run: cargo build --release --bin padbridge
+      - name: photograph each page
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          mkdir -p shots
+          Xvfb :99 -screen 0 1400x880x24 &
+          export DISPLAY=:99
+          sleep 2
+          shoot() {
+            name=$1; shift
+            env "$@" PADBRIDGE_PROFILE_DIR="$PWD/shot-profiles" ./target/release/padbridge \
+              > "shots/$name.log" 2>&1 &
+            pid=$!
+            sleep 6
+            import -window root "shots/$name.png" || true
+            kill $pid || true
+            wait $pid || true
+          }
+          shoot keyboard PADBRIDGE_TAB=keyboard PADBRIDGE_SELECT=W
+          shoot mouse PADBRIDGE_TAB=mouse PADBRIDGE_SELECT=MouseLeft
+          shoot controller PADBRIDGE_TAB=controller PADBRIDGE_SELECT_OUTPUT=A
+          shoot stick PADBRIDGE_TAB=stick
+          shoot settings PADBRIDGE_TAB=settings
+          ls -la shots
+      - name: publish screenshots
+        if: github.ref == 'refs/heads/main'
+        run: |
+          cd shots
+          git init -q
+          git checkout -q -b screenshots
+          git add .
+          git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -q -m "screenshots for ${GITHUB_SHA}"
+          git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" screenshots

@@ -1,20 +1,35 @@
 [package]
 name = "padbridge"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "Remaps keyboard and mouse input to a virtual Xbox 360 (XInput) controller on Windows"
 publish = false
+default-run = "padbridge"
 
 [lib]
 name = "padbridge"
 path = "src/lib.rs"
 
+# The window app.
 [[bin]]
 name = "padbridge"
-path = "src/main.rs"
+path = "src/gui/main.rs"
+required-features = ["gui"]
 
-# The only external dependency. It talks to the ViGEmBus driver and is Windows-only;
-# everything else (Win32 FFI included) is written against `std`.
+# The console program (same engine, no window).
+[[bin]]
+name = "padbridge-cli"
+path = "src/cli.rs"
+
+[features]
+default = ["gui"]
+gui = ["dep:eframe"]
+
+[dependencies]
+# Window toolkit for the app only; the mapping engine itself depends on nothing but std.
+eframe = { version = "0.29.1", optional = true }
+
+# Talks to the ViGEmBus driver; Windows-only.
 [target.'cfg(windows)'.dependencies]
 vigem-client = "0.1.4"
 

@@ -788,6 +788,87 @@ impl Config {
         Config::parse(DEFAULT_CONFIG).expect("built-in bindings.toml is valid")
     }
 
+    /// Writes the configuration back out in the same format `parse` reads. Every value is
+    /// written explicitly, so the file is self-documenting and survives future default changes.
+    pub fn to_toml(&self) -> String {
+        fn q(s: &str) -> String {
+            format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+        }
+        let g = &self.general;
+        let m = &self.mouse;
+        let mut s = String::new();
+        s.push_str("# padbridge profile (written by padbridge; comments are not kept)\n\n");
+        s.push_str("[general]\n");
+        s.push_str(&format!("start_enabled = {}\n", g.start_enabled));
+        s.push_str(&format!(
+            "toggle_hotkey = {}\n",
+            q(&g.toggle_hotkey.to_string())
+        ));
+        s.push_str(&format!(
+            "exit_hotkey = {}\n",
+            q(&g.exit_hotkey.to_string())
+        ));
+        s.push_str(&format!("output_hz = {}\n", g.output_hz));
+        s.push_str(&format!("ignore_injected = {}\n", g.ignore_injected));
+        s.push_str(&format!(
+            "unbound = {}\n",
+            q(match g.unbound {
+                UnboundPolicy::Pass => "pass",
+                UnboundPolicy::Block => "block",
+            })
+        ));
+        s.push_str(&format!(
+            "socd = {}\n",
+            q(match g.socd {
+                Socd::Last => "last",
+                Socd::Neutral => "neutral",
+            })
+        ));
+        s.push_str(&format!(
+            "normalize_diagonals = {}\n",
+            g.normalize_diagonals
+        ));
+        s.push_str(&format!("stick_ramp_ms = {}\n", g.stick_ramp_ms));
+        s.push_str(&format!("walk_scale = {}\n", g.walk_scale));
+        s.push_str(&format!("trigger_value = {}\n", g.trigger_value));
+        s.push_str(&format!("wheel_pulse_ms = {}\n", g.wheel_pulse_ms));
+        s.push_str(&format!("beep_on_toggle = {}\n", g.beep_on_toggle));
+
+        s.push_str("\n[mouse]\n");
+        s.push_str(&format!("smoothing_ms = {}\n", m.smoothing_ms));
+        s.push_str(&format!("deadzone = {}\n", m.deadzone));
+        s.push_str(&format!("curve_exponent = {}\n", m.curve_exponent));
+        s.push_str(&format!("max_backlog_ms = {}\n", m.max_backlog_ms));
+        s.push_str(&format!("swallow_motion = {}\n", m.swallow_motion));
+
+        for (axis, section) in [
+            (MouseAxis::X, "axis.mouse_x"),
+            (MouseAxis::Y, "axis.mouse_y"),
+        ] {
+            if let Some(a) = self.axes.iter().find(|a| a.source == axis) {
+                s.push_str(&format!("\n[{section}]\n"));
+                s.push_str(&format!("target = {}\n", q(a.target.name())));
+                s.push_str(&format!("sensitivity = {}\n", a.sensitivity));
+                s.push_str(&format!("invert = {}\n", a.invert));
+                s.push_str(&format!(
+                    "full_deflection_cps = {}\n",
+                    a.full_deflection_cps
+                ));
+            }
+        }
+
+        s.push_str("\n[bindings]\n");
+        for out in Output::ALL {
+            let srcs = self.bindings.sources_for(out);
+            if srcs.is_empty() {
+                continue;
+            }
+            let names: Vec<String> = srcs.iter().map(|x| q(&x.to_string())).collect();
+            s.push_str(&format!("{} = [{}]\n", out.name(), names.join(", ")));
+        }
+        s
+    }
+
     /// Human-readable summary for `--check`.
     pub fn summary(&self) -> String {
         let mut s = String::new();
@@ -984,5 +1065,47 @@ mod tests {
         let s = Config::builtin().summary();
         assert!(s.contains("RightStickX"));
         assert!(s.contains("LeftStickUp"));
+    }
+
+    #[test]
+    fn to_toml_round_trips_exactly() {
+        let a = Config::builtin();
+        let text = a.to_toml();
+        let b = Config::parse(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+        assert_eq!(b.to_toml(), text, "writing is idempotent");
+        assert_eq!(b.bindings, a.bindings);
+        assert_eq!(b.axes.len(), a.axes.len());
+        assert_eq!(b.general.toggle_hotkey, a.general.toggle_hotkey);
+        assert_eq!(b.mouse.smoothing_ms, a.mouse.smoothing_ms);
+    }
+
+    #[test]
+    fn to_toml_keeps_unusual_values() {
+        let mut c = Config::parse(
+            "[general]\nunbound = \"block\"\nsocd = \"neutral\"\nwalk_scale = 0.35\n\
+             [axis.mouse_y]\ntarget = \"LeftStickX\"\ninvert = true\nsensitivity = 2.5\n\
+             full_deflection_cps = 1234.5\n\
+             [bindings]\nA = [\"sc:0xE0FF\", \"WheelLeft\"]\n",
+        )
+        .unwrap();
+        c.mouse.deadzone = 0.123456789;
+        let b = Config::parse(&c.to_toml()).unwrap();
+        assert_eq!(b.general.unbound, UnboundPolicy::Block);
+        assert_eq!(b.general.socd, Socd::Neutral);
+        assert_eq!(b.general.walk_scale, 0.35);
+        assert_eq!(b.mouse.deadzone, 0.123456789, "floats survive exactly");
+        assert_eq!(b.axes.len(), 1);
+        assert_eq!(b.axes[0].target, AxisTarget::LeftX);
+        assert!(b.axes[0].invert);
+        assert_eq!(b.axes[0].full_deflection_cps, 1234.5);
+        assert_eq!(b.bindings, c.bindings);
+    }
+
+    #[test]
+    fn to_toml_with_nothing_bound() {
+        let c = Config::parse("").unwrap();
+        let b = Config::parse(&c.to_toml()).unwrap();
+        assert!(b.axes.is_empty());
+        assert_eq!(b.bindings.source_count(), 0);
     }
 }

@@ -32,6 +32,43 @@ impl Bindings {
         self.map.contains_key(&src)
     }
 
+    /// Removes one mapping. A source left with no outputs is removed entirely, so it stops being
+    /// captured.
+    pub fn remove(&mut self, src: Source, out: Output) {
+        if let Some(v) = self.map.get_mut(&src) {
+            v.retain(|o| *o != out);
+            if v.is_empty() {
+                self.map.remove(&src);
+            }
+        }
+    }
+
+    /// Adds the mapping if absent, removes it if present.
+    pub fn toggle(&mut self, src: Source, out: Output) {
+        if self.outputs(src).contains(&out) {
+            self.remove(src, out);
+        } else {
+            self.add(src, out);
+        }
+    }
+
+    /// Removes every mapping of one source.
+    pub fn clear_source(&mut self, src: Source) {
+        self.map.remove(&src);
+    }
+
+    /// Every source that drives `out`, in a stable order.
+    pub fn sources_for(&self, out: Output) -> Vec<Source> {
+        let mut v: Vec<Source> = self
+            .map
+            .iter()
+            .filter(|(_, outs)| outs.contains(&out))
+            .map(|(s, _)| *s)
+            .collect();
+        v.sort();
+        v
+    }
+
     /// Number of distinct bound sources.
     pub fn source_count(&self) -> usize {
         self.map.len()
@@ -148,6 +185,27 @@ mod tests {
         assert_eq!(b.source_count(), 1);
         assert_eq!(b.pairs_sorted().len(), 2);
         assert!(b.outputs(Source::parse("S").unwrap()).is_empty());
+    }
+
+    #[test]
+    fn editing_operations() {
+        let mut b = Bindings::new();
+        let w = Source::parse("W").unwrap();
+        let up = Source::parse("Up").unwrap();
+        b.toggle(w, Output::A);
+        b.add(up, Output::A);
+        assert_eq!(b.sources_for(Output::A), vec![w, up]);
+        b.toggle(w, Output::A);
+        assert!(
+            !b.contains(w),
+            "a source with no outputs is no longer captured"
+        );
+        b.add(up, Output::B);
+        b.remove(up, Output::A);
+        assert_eq!(b.outputs(up), &[Output::B]);
+        b.clear_source(up);
+        assert_eq!(b.source_count(), 0);
+        b.remove(up, Output::A); // removing something absent is harmless
     }
 
     #[test]
