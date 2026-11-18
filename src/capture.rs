@@ -188,7 +188,7 @@ mod tests {
 
     fn mk(general: &str, bindings: &str) -> (Capture, Mapper) {
         let text = format!(
-            "[general]\n{general}\n[axis.mouse_x]\ntarget = \"RightStickX\"\n[bindings]\n{bindings}\n"
+            "[general]\ntoggle_hotkey = \"Ctrl+Alt+F10\"\nexit_hotkey = \"Ctrl+Alt+F12\"\n{general}\n[axis.mouse_x]\ntarget = \"RightStickX\"\n[bindings]\n{bindings}\n"
         );
         let cfg = Config::parse(&text).unwrap();
         let b = Arc::new(cfg.bindings.clone());

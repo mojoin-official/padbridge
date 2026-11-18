@@ -338,6 +338,30 @@ pub enum InputMethod {
     Hooks,
 }
 
+/// Default hotkeys. Letters on purpose: on many keyboards F10/F12 double as mute/volume keys, so
+/// the original Ctrl+Alt+F10 / Ctrl+Alt+F12 muted Windows when used.
+pub const DEFAULT_TOGGLE_HOTKEY: &str = "Ctrl+Alt+P";
+pub const DEFAULT_EXIT_HOTKEY: &str = "Ctrl+Alt+Q";
+/// The hotkeys earlier versions used; profiles still carrying both are switched to the new ones.
+pub const OLD_TOGGLE_HOTKEY: &str = "Ctrl+Alt+F10";
+pub const OLD_EXIT_HOTKEY: &str = "Ctrl+Alt+F12";
+
+impl Config {
+    /// Replaces the old F10/F12 default hotkeys with the new defaults. Returns true if it did.
+    pub fn migrate_hotkeys(&mut self) -> bool {
+        let g = &mut self.general;
+        if g.toggle_hotkey.to_string() == OLD_TOGGLE_HOTKEY
+            && g.exit_hotkey.to_string() == OLD_EXIT_HOTKEY
+        {
+            g.toggle_hotkey = Combo::parse(DEFAULT_TOGGLE_HOTKEY).expect("valid default");
+            g.exit_hotkey = Combo::parse(DEFAULT_EXIT_HOTKEY).expect("valid default");
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// Longest accepted program name for `game_exe`.
 pub const GAME_EXE_MAX: usize = 260;
 
@@ -564,8 +588,8 @@ fn parse_general(doc: &Document) -> Result<General, ConfigError> {
     });
     let g = General {
         start_enabled: r.boolean("start_enabled", true)?,
-        toggle_hotkey: parse_hotkey(&mut r, "toggle_hotkey", "Ctrl+Alt+F10")?,
-        exit_hotkey: parse_hotkey(&mut r, "exit_hotkey", "Ctrl+Alt+F12")?,
+        toggle_hotkey: parse_hotkey(&mut r, "toggle_hotkey", DEFAULT_TOGGLE_HOTKEY)?,
+        exit_hotkey: parse_hotkey(&mut r, "exit_hotkey", DEFAULT_EXIT_HOTKEY)?,
         output_hz: r.integer("output_hz", 500, 60, 1000)? as u32,
         ignore_injected: r.boolean("ignore_injected", true)?,
         unbound: match r.choice("unbound", &["pass", "block"], 0)? {
@@ -1147,6 +1171,32 @@ mod tests {
         assert!(b.axes[0].invert);
         assert_eq!(b.axes[0].full_deflection_cps, 1234.5);
         assert_eq!(b.bindings, c.bindings);
+    }
+
+    #[test]
+    fn old_default_hotkeys_are_migrated_and_custom_ones_kept() {
+        let mut c = Config::parse(
+            "[general]\ntoggle_hotkey = \"Ctrl+Alt+F10\"\nexit_hotkey = \"Ctrl+Alt+F12\"\n",
+        )
+        .unwrap();
+        assert!(c.migrate_hotkeys());
+        assert_eq!(c.general.toggle_hotkey.to_string(), DEFAULT_TOGGLE_HOTKEY);
+        assert_eq!(c.general.exit_hotkey.to_string(), DEFAULT_EXIT_HOTKEY);
+        assert!(!c.migrate_hotkeys(), "only once");
+        let mut custom =
+            Config::parse("[general]\ntoggle_hotkey = \"Ctrl+Alt+F10\"\nexit_hotkey = \"Pause\"\n")
+                .unwrap();
+        assert!(!custom.migrate_hotkeys(), "a customised pair is left alone");
+        let fresh = Config::parse("").unwrap();
+        assert_eq!(
+            fresh.general.toggle_hotkey.to_string(),
+            DEFAULT_TOGGLE_HOTKEY
+        );
+        // the defaults are not media keys and both are valid, distinct combos
+        assert!(!fresh
+            .general
+            .toggle_hotkey
+            .overlaps(&fresh.general.exit_hotkey));
     }
 
     #[test]

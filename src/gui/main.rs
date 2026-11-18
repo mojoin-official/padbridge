@@ -76,6 +76,8 @@ pub struct PadApp {
     /// Toggle and exit hotkey text as typed (may be temporarily invalid).
     pub hotkey_text: [String; 2],
     pub hotkey_err: [Option<String>; 2],
+    /// Which hotkey field is waiting for a key combination to be pressed.
+    pub recording: Option<usize>,
     pub tab: Tab,
     pub selected_input: Option<Source>,
     pub selected_output: Option<Output>,
@@ -109,6 +111,7 @@ impl PadApp {
             saved_text: String::new(),
             hotkey_text: [String::new(), String::new()],
             hotkey_err: [None, None],
+            recording: None,
             tab: Tab::Keyboard,
             selected_input: None,
             selected_output: None,
@@ -180,10 +183,22 @@ impl PadApp {
     fn load_profile(&mut self, name: &str) {
         let Some(store) = &self.store else { return };
         match store.load(name) {
-            Ok(cfg) => {
+            Ok(mut cfg) => {
                 store.set_last_used(name);
+                // Old profiles used Ctrl+Alt+F10/F12, which mute Windows on keyboards where F10
+                // is the mute key. Switch them over and save, so the fix sticks.
+                let migrated = cfg.migrate_hotkeys() && store.save(name, &cfg).is_ok();
                 self.set_loaded(name.to_string(), cfg);
-                self.info(format!("Loaded profile '{name}'"));
+                if migrated {
+                    self.info(format!(
+                        "Loaded '{name}'. Hotkeys changed to {} (pause/resume) and {} (stop): \
+                         the old F10/F12 ones muted Windows on many keyboards.",
+                        padbridge::config::DEFAULT_TOGGLE_HOTKEY,
+                        padbridge::config::DEFAULT_EXIT_HOTKEY
+                    ));
+                } else {
+                    self.info(format!("Loaded profile '{name}'"));
+                }
             }
             Err(e) => self.error(e),
         }

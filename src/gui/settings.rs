@@ -10,6 +10,22 @@ use std::time::{Duration, Instant};
 
 const PICK_SECONDS: u64 = 5;
 
+/// padbridge's name for a key pressed in the app window (letters, digits, F-keys, navigation and
+/// punctuation keys); `None` for keys it cannot name.
+fn egui_key_name(key: egui::Key) -> Option<String> {
+    let dbg = format!("{key:?}");
+    let name = if let Some(d) = dbg.strip_prefix("Num") {
+        d.to_string()
+    } else if let Some(a) = dbg.strip_prefix("Arrow") {
+        a.to_string()
+    } else {
+        dbg
+    };
+    padbridge::keys::Source::parse(&name)
+        .ok()
+        .map(|s| s.to_string())
+}
+
 impl PadApp {
     pub fn settings_tab(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default()
@@ -179,8 +195,9 @@ impl PadApp {
             theme::help(
                 ui,
                 "These always work, even while everything is captured, and never reach the game. \
-                 Write keys joined by '+', e.g. Ctrl+Alt+F10. Ctrl, Shift, Alt and Win mean \
-                 either side.",
+                 Click Record and press the combination, or type keys joined by '+'. Avoid F-keys \
+                 that are also media keys on your keyboard (F10 is mute on many), or using the \
+                 hotkey will mute Windows too.",
             );
             ui.add_space(6.0);
             egui::Grid::new("hotkeys")
@@ -189,10 +206,63 @@ impl PadApp {
                 .show(ui, |ui| {
                     for (i, label) in [(0usize, "Pause / resume capture"), (1, "Stop mapping")] {
                         ui.label(label);
-                        ui.add_sized(
-                            [220.0, 26.0],
-                            egui::TextEdit::singleline(&mut self.hotkey_text[i]),
-                        );
+                        ui.horizontal(|ui| {
+                            if self.recording == Some(i) {
+                                ui.add_sized(
+                                    [220.0, 26.0],
+                                    egui::Label::new(
+                                        egui::RichText::new("Press the keys… (Esc cancels)")
+                                            .color(theme::SELECT),
+                                    ),
+                                );
+                                let pressed = ui.input(|inp| {
+                                    inp.events.iter().find_map(|e| match e {
+                                        egui::Event::Key {
+                                            key,
+                                            pressed: true,
+                                            repeat: false,
+                                            modifiers,
+                                            ..
+                                        } => Some((*key, *modifiers)),
+                                        _ => None,
+                                    })
+                                });
+                                if let Some((key, m)) = pressed {
+                                    if key == egui::Key::Escape && !m.any() {
+                                        self.recording = None;
+                                    } else if let Some(name) = egui_key_name(key) {
+                                        let mut parts = Vec::new();
+                                        if m.ctrl {
+                                            parts.push("Ctrl".to_string());
+                                        }
+                                        if m.shift {
+                                            parts.push("Shift".to_string());
+                                        }
+                                        if m.alt {
+                                            parts.push("Alt".to_string());
+                                        }
+                                        parts.push(name);
+                                        self.hotkey_text[i] = parts.join("+");
+                                        self.recording = None;
+                                    }
+                                }
+                                if ui.button("Cancel").clicked() {
+                                    self.recording = None;
+                                }
+                            } else {
+                                ui.add_sized(
+                                    [220.0, 26.0],
+                                    egui::TextEdit::singleline(&mut self.hotkey_text[i]),
+                                );
+                                if ui
+                                    .button("Record")
+                                    .on_hover_text("Click, then press the key combination")
+                                    .clicked()
+                                {
+                                    self.recording = Some(i);
+                                }
+                            }
+                        });
                         match &self.hotkey_err[i] {
                             Some(e) => {
                                 ui.label(egui::RichText::new(e).color(theme::DANGER));

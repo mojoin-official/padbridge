@@ -25,7 +25,7 @@ OPTIONS:
     -h, --help               Show this help
     -V, --version            Show the version
 
-Default hotkeys (configurable): Ctrl+Alt+F10 toggles mapping, Ctrl+Alt+F12 exits.
+Default hotkeys (configurable): Ctrl+Alt+P toggles mapping, Ctrl+Alt+Q exits.
 ";
 
 #[derive(Default)]

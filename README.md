@@ -36,7 +36,9 @@ mapping; **Test mode** runs everything except the virtual controller, so you can
 preview without the driver. Edits made while running take effect with **Apply changes**.
 
 Hotkeys (configurable, never reach the game, work even when everything is captured):
-**Ctrl+Alt+F10** pauses/resumes capture, **Ctrl+Alt+F12** stops mapping. While capturing, your
+**Ctrl+Alt+P** pauses/resumes capture, **Ctrl+Alt+Q** stops mapping (earlier versions used
+Ctrl+Alt+F10/F12, which muted Windows on keyboards where F10 is the mute key; old profiles are
+switched over automatically). While capturing, your
 mouse drives the stick, so use the hotkey to get the cursor back. Closing the window always
 releases everything and unplugs the pad.
 

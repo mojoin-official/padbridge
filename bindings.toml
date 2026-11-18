@@ -15,9 +15,10 @@
 start_enabled = true
 
 # Hotkeys always work, even while every key is captured, and are never passed to the game.
-# "Ctrl", "Shift", "Alt" and "Win" accept either side.
-toggle_hotkey = "Ctrl+Alt+F10"
-exit_hotkey = "Ctrl+Alt+F12"
+# "Ctrl", "Shift", "Alt" and "Win" accept either side. Avoid F-keys that double as media keys
+# on your keyboard (F10 is mute on many), or using the hotkey mutes Windows too.
+toggle_hotkey = "Ctrl+Alt+P"
+exit_hotkey = "Ctrl+Alt+Q"
 
 # How often the controller state is updated (60..1000). Higher = lower latency, more CPU.
 output_hz = 500
