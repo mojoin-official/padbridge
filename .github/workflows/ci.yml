@@ -56,7 +56,7 @@ jobs:
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q xvfb imagemagick libxkbcommon-x11-0 libxcursor1 \
-            libxrandr2 libxi6 libgl1-mesa-dri libegl1 libgl1
+            libxrandr2 libxi6 libgl1-mesa-dri libegl1 libgl1 xcompmgr
       - run: cargo build --release --bin padbridge
       - name: photograph each page
         env:
@@ -66,6 +66,15 @@ jobs:
           Xvfb :99 -screen 0 1400x880x24 &
           export DISPLAY=:99
           sleep 2
+          # A colourful stand-in desktop and a compositor, so the Clear theme's transparency
+          # is visible in the pictures (the other themes are opaque and unaffected).
+          convert -size 1400x880 gradient:'#ff9a8b'-'#3f86ed' \
+            -fill 'rgba(255,255,255,0.35)' -draw 'circle 300,250 300,420' \
+            -fill 'rgba(20,20,40,0.5)' -draw 'rectangle 700,500 1300,820' \
+            -fill white -pointsize 110 -gravity center -annotate +0-120 'DESKTOP' desk.png
+          display -window root desk.png || true
+          xcompmgr &
+          sleep 1
           shoot() {
             name=$1; shift
             env "$@" PADBRIDGE_PROFILE_DIR="$PWD/shot-profiles" ./target/release/padbridge \
@@ -83,6 +92,12 @@ jobs:
             shoot $theme-stick PADBRIDGE_THEME=$theme PADBRIDGE_TAB=stick
             shoot $theme-settings PADBRIDGE_THEME=$theme PADBRIDGE_TAB=settings
           done
+          shoot clear-keyboard PADBRIDGE_THEME=clear PADBRIDGE_TAB=keyboard PADBRIDGE_SELECT=W
+          shoot clear-controller PADBRIDGE_THEME=clear PADBRIDGE_TAB=controller PADBRIDGE_SELECT_OUTPUT=A
+          shoot clear-stick PADBRIDGE_THEME=clear PADBRIDGE_TAB=stick
+          shoot clear-settings PADBRIDGE_THEME=clear PADBRIDGE_TAB=settings
+          shoot clear-keyboard-opacity-0 PADBRIDGE_THEME=clear PADBRIDGE_OPACITY=0 PADBRIDGE_TAB=keyboard PADBRIDGE_SELECT=W
+          shoot clear-keyboard-opacity-100 PADBRIDGE_THEME=clear PADBRIDGE_OPACITY=1 PADBRIDGE_TAB=keyboard PADBRIDGE_SELECT=W
           ls -la shots
       - name: publish screenshots
         run: |

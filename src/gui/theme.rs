@@ -3,6 +3,9 @@
 //! * **Aurora** (dark): frosted panels over an indigo-to-violet gradient with teal, blue and pink
 //!   glows.
 //! * **Frost** (light): airy white glass over a pale blue-grey gradient with blue glows.
+//! * **Clear**: the window itself is see-through. A smoky backdrop whose opacity the user sets
+//!   (0 % = fully clear, 100 % = solid) lets the desktop or game show behind; cards and panels keep
+//!   their own tint so text stays readable at any setting.
 //!
 //! egui has no backdrop blur, so the glass effect is built from translucent fills, thin bright
 //! borders, soft shadows and large, blurred-looking radial glows painted behind everything.
@@ -10,19 +13,24 @@
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke};
 use std::sync::atomic::{AtomicU8, Ordering};
 
+/// Clear theme backdrop opacity in percent.
+static OPACITY: AtomicU8 = AtomicU8::new(45);
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Theme {
     Aurora,
     Frost,
+    Clear,
 }
 
 impl Theme {
-    pub const ALL: [Theme; 2] = [Theme::Aurora, Theme::Frost];
+    pub const ALL: [Theme; 3] = [Theme::Aurora, Theme::Frost, Theme::Clear];
 
     pub fn label(self) -> &'static str {
         match self {
             Theme::Aurora => "Aurora (dark glass)",
             Theme::Frost => "Frost (light glass)",
+            Theme::Clear => "Clear (see-through)",
         }
     }
 
@@ -30,6 +38,7 @@ impl Theme {
         match self {
             Theme::Aurora => "aurora",
             Theme::Frost => "frost",
+            Theme::Clear => "clear",
         }
     }
 
@@ -37,6 +46,7 @@ impl Theme {
         match s.trim().to_ascii_lowercase().as_str() {
             "aurora" | "dark" => Some(Theme::Aurora),
             "frost" | "light" => Some(Theme::Frost),
+            "clear" | "transparent" => Some(Theme::Clear),
             _ => None,
         }
     }
@@ -44,6 +54,8 @@ impl Theme {
 
 pub struct Palette {
     pub dark: bool,
+    /// The window is see-through and the backdrop follows the opacity setting.
+    pub see_through: bool,
     pub bg_top: Color32,
     pub bg_bottom: Color32,
     /// (x fraction, y fraction, radius fraction of the window diagonal, colour)
@@ -91,6 +103,7 @@ const fn white(a: u8) -> Color32 {
 
 static AURORA: Palette = Palette {
     dark: true,
+    see_through: false,
     bg_top: Color32::from_rgb(34, 36, 82),
     bg_bottom: Color32::from_rgb(74, 58, 124),
     glows: [
@@ -121,6 +134,7 @@ static AURORA: Palette = Palette {
 
 static FROST: Palette = Palette {
     dark: false,
+    see_through: false,
     bg_top: Color32::from_rgb(238, 242, 250),
     bg_bottom: Color32::from_rgb(214, 224, 241),
     glows: [
@@ -149,21 +163,64 @@ static FROST: Palette = Palette {
     shadow: rgba(60, 80, 130, 45),
 };
 
+static CLEAR: Palette = Palette {
+    dark: true,
+    see_through: true,
+    // Neutral smoke; its alpha is set by the opacity slider when painted.
+    bg_top: Color32::from_rgb(16, 18, 26),
+    bg_bottom: Color32::from_rgb(22, 24, 34),
+    glows: [
+        (0.10, 0.10, 0.45, rgba(170, 220, 255, 40)),
+        (0.90, 0.90, 0.45, rgba(200, 190, 255, 34)),
+        (0.50, 0.50, 0.01, Color32::TRANSPARENT),
+    ],
+    // Panels and cards carry their own smoky tint so text stays readable over anything.
+    panel: rgba(14, 16, 24, 120),
+    bar: rgba(14, 16, 24, 110),
+    card: rgba(20, 22, 32, 150),
+    card_hi: rgba(255, 255, 255, 40),
+    line: white(70),
+    text: Color32::from_rgb(246, 248, 255),
+    text_dim: Color32::from_rgb(200, 206, 226),
+    accent: Color32::from_rgb(170, 225, 255),
+    accent_dim: rgba(170, 225, 255, 70),
+    accent_hi: rgba(170, 225, 255, 120),
+    on_accent: Color32::from_rgb(14, 20, 36),
+    select: Color32::from_rgb(255, 210, 130),
+    danger: Color32::from_rgb(255, 140, 155),
+    danger_dim: rgba(255, 110, 140, 110),
+    ok_dim: rgba(170, 225, 255, 50),
+    body: rgba(20, 22, 32, 120),
+    inset: rgba(8, 10, 18, 150),
+    popup: rgba(24, 26, 38, 250),
+    shadow: rgba(0, 0, 0, 80),
+};
+
 static CURRENT: AtomicU8 = AtomicU8::new(0);
+
+/// Clear theme backdrop opacity, 0.0 (fully clear) to 1.0 (solid).
+pub fn opacity() -> f32 {
+    f32::from(OPACITY.load(Ordering::Relaxed)) / 100.0
+}
+
+pub fn set_opacity(v: f32) {
+    OPACITY.store((v.clamp(0.0, 1.0) * 100.0).round() as u8, Ordering::Relaxed);
+}
 
 /// The active palette.
 pub fn p() -> &'static Palette {
     match CURRENT.load(Ordering::Relaxed) {
         1 => &FROST,
+        2 => &CLEAR,
         _ => &AURORA,
     }
 }
 
 pub fn current() -> Theme {
-    if p().dark {
-        Theme::Aurora
-    } else {
-        Theme::Frost
+    match CURRENT.load(Ordering::Relaxed) {
+        1 => Theme::Frost,
+        2 => Theme::Clear,
+        _ => Theme::Aurora,
     }
 }
 
@@ -173,6 +230,7 @@ pub fn set(ctx: &egui::Context, t: Theme) {
         match t {
             Theme::Aurora => 0,
             Theme::Frost => 1,
+            Theme::Clear => 2,
         },
         Ordering::Relaxed,
     );
@@ -269,11 +327,13 @@ pub fn paint_backdrop(ctx: &egui::Context) {
     let screen = ctx.screen_rect();
     let painter = ctx.layer_painter(egui::LayerId::background());
 
+    let k = if c.see_through { opacity() } else { 1.0 };
+    let (top, bottom) = (c.bg_top.gamma_multiply(k), c.bg_bottom.gamma_multiply(k));
     let mut m = egui::Mesh::default();
-    m.colored_vertex(screen.left_top(), c.bg_top);
-    m.colored_vertex(screen.right_top(), c.bg_top);
-    m.colored_vertex(screen.right_bottom(), c.bg_bottom);
-    m.colored_vertex(screen.left_bottom(), c.bg_bottom);
+    m.colored_vertex(screen.left_top(), top);
+    m.colored_vertex(screen.right_top(), top);
+    m.colored_vertex(screen.right_bottom(), bottom);
+    m.colored_vertex(screen.left_bottom(), bottom);
     m.add_triangle(0, 1, 2);
     m.add_triangle(0, 2, 3);
     painter.add(egui::Shape::mesh(m));

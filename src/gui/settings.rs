@@ -100,6 +100,34 @@ impl PadApp {
                     }
                 }
             });
+            if theme::current() == theme::Theme::Clear {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.label("Background opacity");
+                    let mut pct = theme::opacity() * 100.0;
+                    let r = ui.add(
+                        egui::Slider::new(&mut pct, 0.0..=100.0)
+                            .suffix(" %")
+                            .max_decimals(0),
+                    );
+                    if r.changed() {
+                        theme::set_opacity(pct / 100.0);
+                    }
+                    if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                        if let Some(store) = &self.store {
+                            let _ = std::fs::write(
+                                store.dir().join(".opacity"),
+                                format!("{:.2}", theme::opacity()),
+                            );
+                        }
+                    }
+                });
+                theme::help(
+                    ui,
+                    "0 % = fully clear (your desktop or game shows through), 100 % = solid. Panels \
+                     and cards keep their own tint so text stays readable.",
+                );
+            }
         });
     }
 

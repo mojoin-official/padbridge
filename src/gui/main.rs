@@ -153,6 +153,20 @@ impl PadApp {
             .or(saved_theme)
             .and_then(|t| theme::Theme::from_key(&t))
             .unwrap_or(theme::Theme::Aurora);
+        if let Some(v) = app
+            .store
+            .as_ref()
+            .and_then(|s| std::fs::read_to_string(s.dir().join(".opacity")).ok())
+            .and_then(|t| t.trim().parse::<f32>().ok())
+        {
+            theme::set_opacity(v);
+        }
+        if let Some(v) = std::env::var("PADBRIDGE_OPACITY")
+            .ok()
+            .and_then(|t| t.trim().parse::<f32>().ok())
+        {
+            theme::set_opacity(v);
+        }
         theme::set(&cc.egui_ctx, chosen);
         // Used for screenshots and for jumping straight to a page.
         if let Some(t) = std::env::var("PADBRIDGE_TAB")
@@ -793,6 +807,11 @@ fn status_chip(ui: &mut egui::Ui, on: bool, text: &str) {
 }
 
 impl eframe::App for PadApp {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        // Fully transparent: the backdrop painted each frame decides what shows.
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         theme::paint_backdrop(ctx);
         self.poll_runtime();
@@ -828,7 +847,10 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("padbridge")
             .with_inner_size([1380.0, 860.0])
-            .with_min_inner_size([1100.0, 700.0]),
+            .with_min_inner_size([1100.0, 700.0])
+            // Lets the Clear theme show the desktop behind the window. The other themes paint an
+            // opaque backdrop, so they look exactly as before.
+            .with_transparent(true),
         ..Default::default()
     };
     eframe::run_native(
