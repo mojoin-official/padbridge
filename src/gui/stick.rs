@@ -460,6 +460,31 @@ impl PadApp {
                  see the sticks here.",
             );
         }
+        if let Some(rt) = &self.runtime {
+            let n = rt.mouse_events();
+            let capturing = rt.enabled();
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "Input: {}   Mouse movement received: {n}",
+                        rt.backend().describe()
+                    ))
+                    .size(12.5)
+                    .color(theme::TEXT_DIM),
+                );
+            });
+            if capturing && n == 0 {
+                theme::help(
+                    ui,
+                    "Move the mouse now. If this number stays at 0, mouse movement is not reaching \
+                     padbridge: tell Claude which input method is shown above.",
+                );
+            } else if !capturing {
+                theme::help(ui, "Capture is paused, so the sticks stay centred.");
+            }
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
         let r = report.unwrap_or_default();
         let width = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 200.0), egui::Sense::hover());

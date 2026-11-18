@@ -290,6 +290,11 @@ unsafe extern "system" fn wnd_proc(
 ) -> LRESULT {
     if msg == WM_INPUT {
         let _ = catch_unwind(AssertUnwindSafe(|| read_raw_mouse(lparam)));
+    } else if msg == WM_TIMER && wparam == RAW_INPUT_TIMER {
+        // Another part of the process (the app's window toolkit) may register for mouse Raw
+        // Input too, and only the latest registration receives it. Re-claim it regularly so
+        // mouse movement keeps reaching padbridge.
+        register_raw_mouse(hwnd);
     }
     // Required for WM_INPUT as well: DefWindowProc performs the raw-input cleanup.
     DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -353,8 +358,9 @@ fn filter_mouse(sh: &Shared, m: &mut MouseStroke) -> bool {
 /// Reads every keyboard and mouse event from the driver until told to stop, passing on only
 /// what is not captured.
 fn driver_loop(sh: &Shared, drv: &Driver) {
-    // Fast gaming mice report up to 8000 times a second, so events are handled in batches.
-    const BATCH: usize = 64;
+    // One event per call, exactly as Interception's own samples do: with several per call the
+    // library packs keyboard events differently from mouse events.
+    const BATCH: usize = 1;
     let mut keys = KeyDecoder::default();
     let mut pause_swallowed = false;
     let mut input = [StrokeBuf::default(); BATCH];
@@ -738,6 +744,19 @@ fn output_thread(
     let _ = sink.submit(&Report::default());
 }
 
+const RAW_INPUT_TIMER: usize = 1;
+
+/// Routes mouse Raw Input to `hwnd`, even while other windows have focus.
+unsafe fn register_raw_mouse(hwnd: HWND) -> bool {
+    let device = RAWINPUTDEVICE {
+        usUsagePage: HID_USAGE_PAGE_GENERIC,
+        usUsage: HID_USAGE_GENERIC_MOUSE,
+        dwFlags: RIDEV_INPUTSINK,
+        hwndTarget: hwnd,
+    };
+    RegisterRawInputDevices(&device, 1, size_of::<RAWINPUTDEVICE>() as u32) != 0
+}
+
 unsafe fn create_window() -> Result<HWND, String> {
     const ERROR_CLASS_ALREADY_EXISTS: u32 = 1410;
     let instance = GetModuleHandleW(null());
@@ -782,17 +801,12 @@ unsafe fn create_window() -> Result<HWND, String> {
     if hwnd.is_null() {
         return Err(format!("CreateWindowExW failed (error {})", GetLastError()));
     }
-    let device = RAWINPUTDEVICE {
-        usUsagePage: HID_USAGE_PAGE_GENERIC,
-        usUsage: HID_USAGE_GENERIC_MOUSE,
-        dwFlags: RIDEV_INPUTSINK,
-        hwndTarget: hwnd,
-    };
-    if RegisterRawInputDevices(&device, 1, size_of::<RAWINPUTDEVICE>() as u32) == 0 {
+    if !register_raw_mouse(hwnd) {
         let e = GetLastError();
         DestroyWindow(hwnd);
         return Err(format!("RegisterRawInputDevices failed (error {e})"));
     }
+    SetTimer(hwnd, RAW_INPUT_TIMER, 1000, null());
     Ok(hwnd)
 }
 
@@ -1035,6 +1049,12 @@ impl Runtime {
     pub fn set_enabled(&self, on: bool) {
         lock(&self.shared.engine).set_enabled(on);
         let _ = self.shared.notices.send(Notice::Toggled(on));
+    }
+
+    /// Mouse movement packets received since start (diagnostics: 0 while moving the mouse means
+    /// movement is not reaching padbridge).
+    pub fn mouse_events(&self) -> u64 {
+        self.shared.raw_packets.load(Ordering::Relaxed)
     }
 
     /// The report most recently produced (neutral when stopped or in sniff mode).

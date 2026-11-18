@@ -35,6 +35,7 @@ pub type PHANDLER_ROUTINE = Option<unsafe extern "system" fn(u32) -> BOOL>;
 // ---- messages -------------------------------------------------------------------------------
 pub const WM_QUIT: u32 = 0x0012;
 pub const WM_INPUT: u32 = 0x00FF;
+pub const WM_TIMER: u32 = 0x0113;
 pub const WM_KEYDOWN: u32 = 0x0100;
 pub const WM_KEYUP: u32 = 0x0101;
 pub const WM_SYSKEYDOWN: u32 = 0x0104;
@@ -259,6 +260,7 @@ api! {
             header_size: u32,
         ) -> u32;
         fn GetForegroundWindow() -> HWND;
+        fn SetTimer(hwnd: HWND, id: usize, elapse_ms: u32, func: *const c_void) -> usize;
         fn GetWindowThreadProcessId(hwnd: HWND, process_id: *mut u32) -> u32;
     }
 }
