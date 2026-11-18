@@ -143,6 +143,17 @@ impl PadApp {
                 app.error(format!("{e}. Changes cannot be saved."));
             }
         }
+        // Appearance: PADBRIDGE_THEME (for screenshots), else the saved choice, else Aurora.
+        let saved_theme = app
+            .store
+            .as_ref()
+            .and_then(|s| std::fs::read_to_string(s.dir().join(".theme")).ok());
+        let chosen = std::env::var("PADBRIDGE_THEME")
+            .ok()
+            .or(saved_theme)
+            .and_then(|t| theme::Theme::from_key(&t))
+            .unwrap_or(theme::Theme::Aurora);
+        theme::set(&cc.egui_ctx, chosen);
         // Used for screenshots and for jumping straight to a page.
         if let Some(t) = std::env::var("PADBRIDGE_TAB")
             .ok()
@@ -328,21 +339,17 @@ impl PadApp {
 
     fn top_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top")
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::BG)
-                    .inner_margin(egui::Margin::symmetric(16.0, 10.0)),
-            )
+            .frame(theme::bar())
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("padbridge")
                             .size(22.0)
                             .strong()
-                            .color(theme::ACCENT),
+                            .color(theme::p().accent),
                     );
                     ui.add_space(18.0);
-                    ui.label(egui::RichText::new("Profile").color(theme::TEXT_DIM));
+                    ui.label(egui::RichText::new("Profile").color(theme::p().text_dim));
                     let current = self.profile.clone();
                     let mut pick: Option<String> = None;
                     egui::ComboBox::from_id_salt("profile")
@@ -366,8 +373,12 @@ impl PadApp {
                     let can_save = self.store.is_some();
                     let save_label = if self.dirty() { "Save *" } else { "Save" };
                     let save_btn = if self.dirty() {
-                        egui::Button::new(egui::RichText::new(save_label).color(theme::BG).strong())
-                            .fill(theme::ACCENT)
+                        egui::Button::new(
+                            egui::RichText::new(save_label)
+                                .color(theme::p().on_accent)
+                                .strong(),
+                        )
+                        .fill(theme::p().accent)
                     } else {
                         egui::Button::new(save_label)
                     };
@@ -410,11 +421,11 @@ impl PadApp {
         if self.running() {
             let stop = egui::Button::new(
                 egui::RichText::new("Stop")
-                    .color(theme::TEXT)
+                    .color(theme::p().text)
                     .strong()
                     .size(15.0),
             )
-            .fill(theme::DANGER_DIM)
+            .fill(theme::p().danger_dim)
             .min_size(egui::vec2(96.0, 32.0));
             if ui.add(stop).clicked() {
                 self.stop();
@@ -446,11 +457,11 @@ impl PadApp {
             let valid = self.validate().is_ok();
             let start = egui::Button::new(
                 egui::RichText::new("Start")
-                    .color(theme::BG)
+                    .color(theme::p().on_accent)
                     .strong()
                     .size(15.0),
             )
-            .fill(theme::ACCENT)
+            .fill(theme::p().accent)
             .min_size(egui::vec2(96.0, 32.0));
             if ui.add_enabled(valid, start).clicked() {
                 self.start();
@@ -467,36 +478,56 @@ impl PadApp {
         egui::TopBottomPanel::top("tabs")
             .frame(
                 egui::Frame::default()
-                    .fill(theme::BG)
+                    .fill(egui::Color32::TRANSPARENT)
                     .inner_margin(egui::Margin {
                         left: 16.0,
                         right: 16.0,
-                        top: 0.0,
-                        bottom: 8.0,
+                        top: 10.0,
+                        bottom: 10.0,
                     }),
             )
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    for t in Tab::ALL {
-                        let selected = self.tab == t;
-                        let text = egui::RichText::new(t.label())
-                            .size(15.0)
-                            .color(if selected { theme::BG } else { theme::TEXT });
-                        let btn = egui::Button::new(text)
-                            .fill(if selected { theme::ACCENT } else { theme::CARD })
-                            .min_size(egui::vec2(0.0, 30.0));
-                        if ui.add(btn).clicked() {
-                            self.tab = t;
-                        }
-                    }
-                });
+                // A single pill-shaped segmented control.
+                egui::Frame::default()
+                    .fill(theme::p().bar)
+                    .stroke(egui::Stroke::new(1.0_f32, theme::p().line))
+                    .rounding(22.0)
+                    .inner_margin(egui::Margin::same(4.0))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            for t in Tab::ALL {
+                                let selected = self.tab == t;
+                                let text =
+                                    egui::RichText::new(t.label())
+                                        .size(14.5)
+                                        .color(if selected {
+                                            theme::p().on_accent
+                                        } else {
+                                            theme::p().text
+                                        });
+                                let btn = egui::Button::new(text)
+                                    .fill(if selected {
+                                        theme::p().accent
+                                    } else {
+                                        egui::Color32::TRANSPARENT
+                                    })
+                                    .stroke(egui::Stroke::NONE)
+                                    .rounding(18.0)
+                                    .min_size(egui::vec2(0.0, 32.0));
+                                if ui.add(btn).clicked() {
+                                    self.tab = t;
+                                }
+                            }
+                        });
+                    });
                 if let Some(rt) = &self.runtime {
                     let hotkey = self.cfg.general.toggle_hotkey.to_string();
                     let exit = self.cfg.general.exit_hotkey.to_string();
                     let game = self.cfg.general.game_exe.trim().to_string();
                     let (fill, mut text) = if rt.enabled() {
                         (
-                            theme::OK_DIM,
+                            theme::p().ok_dim,
                             if game.is_empty() {
                                 format!(
                                     "Capturing: bound keys and the mouse go to the controller, so \
@@ -513,7 +544,7 @@ impl PadApp {
                         )
                     } else if !game.is_empty() {
                         (
-                            theme::CARD,
+                            theme::p().card,
                             format!(
                                 "Waiting: capture turns on automatically when {game} is in front. \
                                  Until then your keyboard and mouse work normally."
@@ -521,7 +552,7 @@ impl PadApp {
                         )
                     } else {
                         (
-                            theme::CARD,
+                            theme::p().card,
                             format!(
                                 "Paused: keyboard and mouse work normally. Press {hotkey} (or \
                                  'Resume capture') to send them to the controller again."
@@ -537,7 +568,7 @@ impl PadApp {
                         .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            ui.label(egui::RichText::new(text).color(theme::TEXT));
+                            ui.label(egui::RichText::new(text).color(theme::p().text));
                             if hooks_warning {
                                 ui.label(
                                     egui::RichText::new(
@@ -545,7 +576,7 @@ impl PadApp {
                                          it may keep switching to keyboard prompts. Install the \
                                          Interception driver (Settings) to stop that.",
                                     )
-                                    .color(theme::SELECT),
+                                    .color(theme::p().select),
                                 );
                             }
                         });
@@ -556,27 +587,24 @@ impl PadApp {
     fn bottom_bar(&mut self, ctx: &egui::Context) {
         let validation = self.validate().err();
         egui::TopBottomPanel::bottom("bottom")
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::BG)
-                    .inner_margin(egui::Margin::symmetric(16.0, 8.0)),
-            )
+            .frame(theme::bar())
             .show(ctx, |ui| {
                 if let Some(e) = &validation {
                     ui.label(
                         egui::RichText::new(format!("Problem: {e}"))
-                            .color(theme::DANGER)
+                            .color(theme::p().danger)
                             .strong(),
                     );
                 } else if let Some((msg, is_err)) = &self.status {
                     ui.label(egui::RichText::new(msg).color(if *is_err {
-                        theme::DANGER
+                        theme::p().danger
                     } else {
-                        theme::TEXT_DIM
+                        theme::p().text_dim
                     }));
                 }
                 egui::CollapsingHeader::new(
-                    egui::RichText::new(format!("Log ({})", self.log.len())).color(theme::TEXT_DIM),
+                    egui::RichText::new(format!("Log ({})", self.log.len()))
+                        .color(theme::p().text_dim),
                 )
                 .id_salt("log")
                 .show(ui, |ui| {
@@ -617,7 +645,7 @@ impl PadApp {
                                 } else {
                                     "Use letters, digits, spaces, - or _"
                                 })
-                                .color(theme::DANGER),
+                                .color(theme::p().danger),
                             );
                         }
                         ui.horizontal(|ui| {
@@ -667,7 +695,7 @@ impl PadApp {
                         ui.label(format!("Delete '{}'? This cannot be undone.", self.profile));
                         ui.horizontal(|ui| {
                             if ui
-                                .add(egui::Button::new("Delete").fill(theme::DANGER_DIM))
+                                .add(egui::Button::new("Delete").fill(theme::p().danger_dim))
                                 .clicked()
                             {
                                 delete = true;
@@ -745,9 +773,13 @@ impl PadApp {
 }
 
 fn status_chip(ui: &mut egui::Ui, on: bool, text: &str) {
-    let color = if on { theme::ACCENT } else { theme::TEXT_DIM };
+    let color = if on {
+        theme::p().accent
+    } else {
+        theme::p().text_dim
+    };
     egui::Frame::default()
-        .fill(theme::CARD)
+        .fill(theme::p().card)
         .rounding(12.0)
         .inner_margin(egui::Margin::symmetric(10.0, 4.0))
         .show(ui, |ui| {
@@ -762,6 +794,7 @@ fn status_chip(ui: &mut egui::Ui, on: bool, text: &str) {
 
 impl eframe::App for PadApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        theme::paint_backdrop(ctx);
         self.poll_runtime();
         self.poll_pick(ctx);
         if self.running() {

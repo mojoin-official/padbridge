@@ -29,14 +29,12 @@ fn egui_key_name(key: egui::Key) -> Option<String> {
 impl PadApp {
     pub fn settings_tab(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default()
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::BG)
-                    .inner_margin(egui::Margin::same(16.0)),
-            )
+            .frame(theme::clear(16.0))
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.set_max_width(900.0);
+                    self.appearance_card(ui);
+                    ui.add_space(12.0);
                     self.input_card(ui);
                     ui.add_space(12.0);
                     self.hotkey_card(ui);
@@ -73,6 +71,38 @@ impl PadApp {
         }
     }
 
+    fn appearance_card(&mut self, ui: &mut egui::Ui) {
+        theme::card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            theme::title(ui, "Appearance");
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                for t in theme::Theme::ALL {
+                    let on = theme::current() == t;
+                    let text = egui::RichText::new(t.label()).color(if on {
+                        theme::p().on_accent
+                    } else {
+                        theme::p().text
+                    });
+                    let b = egui::Button::new(text)
+                        .fill(if on {
+                            theme::p().accent
+                        } else {
+                            theme::p().card_hi
+                        })
+                        .rounding(18.0)
+                        .min_size(egui::vec2(0.0, 32.0));
+                    if ui.add(b).clicked() && !on {
+                        theme::set(ui.ctx(), t);
+                        if let Some(store) = &self.store {
+                            let _ = std::fs::write(store.dir().join(".theme"), t.key());
+                        }
+                    }
+                }
+            });
+        });
+    }
+
     fn input_card(&mut self, ui: &mut egui::Ui) {
         theme::card().show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -100,7 +130,7 @@ impl PadApp {
                                     d.saturating_duration_since(Instant::now()).as_secs() + 1;
                                 ui.label(
                                     egui::RichText::new(format!("Switch to the game… {left}"))
-                                        .color(theme::SELECT),
+                                        .color(theme::p().select),
                                 );
                             }
                             None => {
@@ -143,9 +173,9 @@ impl PadApp {
 
                     ui.label("Interception driver");
                     let (text, color) = match &self.driver_status {
-                        Ok(()) => ("Installed and ready", theme::ACCENT),
-                        Err(DriverError::Unsupported) => ("Windows only", theme::TEXT_DIM),
-                        Err(e) => (e.short(), theme::SELECT),
+                        Ok(()) => ("Installed and ready", theme::p().accent),
+                        Err(DriverError::Unsupported) => ("Windows only", theme::p().text_dim),
+                        Err(e) => (e.short(), theme::p().select),
                     };
                     ui.label(egui::RichText::new(text).color(color).strong());
                     ui.horizontal(|ui| {
@@ -161,7 +191,11 @@ impl PadApp {
                         } else {
                             format!("checked {} min ago", ago / 60)
                         };
-                        ui.label(egui::RichText::new(when).size(12.5).color(theme::TEXT_DIM));
+                        ui.label(
+                            egui::RichText::new(when)
+                                .size(12.5)
+                                .color(theme::p().text_dim),
+                        );
                     });
                     ui.end_row();
                 });
@@ -176,12 +210,12 @@ impl PadApp {
                 if *e != DriverError::Unsupported {
                     ui.add_space(4.0);
                     egui::Frame::default()
-                        .fill(theme::BG)
+                        .fill(theme::p().inset)
                         .rounding(6.0)
                         .inner_margin(egui::Margin::symmetric(12.0, 8.0))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            ui.label(egui::RichText::new(e.advice()).color(theme::TEXT));
+                            ui.label(egui::RichText::new(e.advice()).color(theme::p().text));
                         });
                 }
             }
@@ -212,7 +246,7 @@ impl PadApp {
                                     [220.0, 26.0],
                                     egui::Label::new(
                                         egui::RichText::new("Press the keys… (Esc cancels)")
-                                            .color(theme::SELECT),
+                                            .color(theme::p().select),
                                     ),
                                 );
                                 let pressed = ui.input(|inp| {
@@ -265,7 +299,7 @@ impl PadApp {
                         });
                         match &self.hotkey_err[i] {
                             Some(e) => {
-                                ui.label(egui::RichText::new(e).color(theme::DANGER));
+                                ui.label(egui::RichText::new(e).color(theme::p().danger));
                             }
                             None => {
                                 ui.label("");

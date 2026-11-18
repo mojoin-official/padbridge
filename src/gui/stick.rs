@@ -14,11 +14,7 @@ impl PadApp {
         egui::SidePanel::right("stick-visuals")
             .exact_width(470.0)
             .resizable(false)
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::PANEL)
-                    .inner_margin(egui::Margin::same(16.0)),
-            )
+            .frame(theme::side())
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     theme::title(ui, "Response");
@@ -36,11 +32,7 @@ impl PadApp {
             });
 
         egui::CentralPanel::default()
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::BG)
-                    .inner_margin(egui::Margin::same(16.0)),
-            )
+            .frame(theme::clear(16.0))
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.columns(2, |cols| {
@@ -237,14 +229,14 @@ impl PadApp {
                     let m = &self.cfg.mouse;
                     let active = m.smoothing_ms == smooth && m.max_backlog_ms == catch;
                     let text = egui::RichText::new(name).color(if active {
-                        theme::BG
+                        theme::p().on_accent
                     } else {
-                        theme::TEXT
+                        theme::p().text
                     });
                     let b = egui::Button::new(text).fill(if active {
-                        theme::ACCENT
+                        theme::p().accent
                     } else {
-                        theme::CARD_HI
+                        theme::p().card_hi
                     });
                     if ui.add(b).on_hover_text(desc).clicked() {
                         self.cfg.mouse.smoothing_ms = smooth;
@@ -359,7 +351,7 @@ impl PadApp {
         let width = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 230.0), egui::Sense::hover());
         let p = ui.painter_at(rect);
-        p.rect_filled(rect, 8.0, theme::BG);
+        p.rect_filled(rect, 12.0, theme::p().inset);
         let plot = Rect::from_min_max(
             Pos2::new(rect.left() + 40.0, rect.top() + 14.0),
             Pos2::new(rect.right() - 14.0, rect.bottom() - 34.0),
@@ -376,18 +368,18 @@ impl PadApp {
             p.rect_filled(
                 Rect::from_min_max(to_screen(0.0, m.deadzone), to_screen(x_max, 0.0)),
                 0.0,
-                Color32::from_rgba_unmultiplied(236, 96, 96, 28),
+                theme::p().danger_dim.gamma_multiply(0.45),
             );
             p.text(
                 to_screen(x_max, m.deadzone) + egui::vec2(-4.0, 3.0),
                 Align2::RIGHT_TOP,
                 "game deadzone",
                 FontId::proportional(11.0),
-                theme::DANGER,
+                theme::p().danger,
             );
         }
         // grid
-        let grid = Stroke::new(1.0_f32, Color32::from_rgb(40, 45, 56));
+        let grid = Stroke::new(1.0_f32, theme::p().line.gamma_multiply(0.45));
         for i in 0..=4 {
             let y = i as f64 / 4.0;
             p.line_segment([to_screen(0.0, y), to_screen(x_max, y)], grid);
@@ -396,7 +388,7 @@ impl PadApp {
                 Align2::RIGHT_CENTER,
                 format!("{}%", i * 25),
                 FontId::proportional(11.0),
-                theme::TEXT_DIM,
+                theme::p().text_dim,
             );
         }
         let cps = self
@@ -418,7 +410,7 @@ impl PadApp {
                 Align2::CENTER_TOP,
                 label,
                 FontId::proportional(11.0),
-                theme::TEXT_DIM,
+                theme::p().text_dim,
             );
         }
         p.text(
@@ -430,7 +422,7 @@ impl PadApp {
                 "mouse speed (% of full stick)"
             },
             FontId::proportional(11.5),
-            theme::TEXT_DIM,
+            theme::p().text_dim,
         );
         // camera speed the game produces: 1:1 up to full, then capped (excess is queued)
         let game: Vec<Pos2> = [(0.0, 0.0), (1.0, 1.0), (x_max, 1.0)]
@@ -439,7 +431,7 @@ impl PadApp {
             .collect();
         p.add(egui::Shape::line(
             game,
-            Stroke::new(2.0_f32, theme::TEXT_DIM),
+            Stroke::new(2.0_f32, theme::p().text_dim),
         ));
         // stick value padbridge sends
         let mut sent = vec![to_screen(0.0, 0.0)];
@@ -448,7 +440,10 @@ impl PadApp {
             let raw = stage.respond((x.min(1.0), 0.0)).0;
             sent.push(to_screen(x, raw));
         }
-        p.add(egui::Shape::line(sent, Stroke::new(2.5_f32, theme::ACCENT)));
+        p.add(egui::Shape::line(
+            sent,
+            Stroke::new(2.5_f32, theme::p().accent),
+        ));
     }
 
     fn live_preview(&self, ui: &mut egui::Ui) {
@@ -470,7 +465,7 @@ impl PadApp {
                         rt.backend().describe()
                     ))
                     .size(12.5)
-                    .color(theme::TEXT_DIM),
+                    .color(theme::p().text_dim),
                 );
             });
             if capturing && n == 0 {
@@ -510,30 +505,30 @@ impl PadApp {
                 rect.left() + half * (i as f32 + 0.5),
                 rect.top() + radius + 8.0,
             );
-            p.circle_filled(c, radius, theme::CARD);
-            p.circle_stroke(c, radius, Stroke::new(1.5_f32, theme::LINE));
+            p.circle_filled(c, radius, theme::p().card);
+            p.circle_stroke(c, radius, Stroke::new(1.5_f32, theme::p().line));
             if mouse_driven && self.cfg.mouse.deadzone > 0.0 {
                 p.circle_stroke(
                     c,
                     radius * self.cfg.mouse.deadzone as f32,
-                    Stroke::new(1.0_f32, theme::DANGER),
+                    Stroke::new(1.0_f32, theme::p().danger),
                 );
             }
             p.line_segment(
                 [c - egui::vec2(radius, 0.0), c + egui::vec2(radius, 0.0)],
-                Stroke::new(1.0_f32, theme::LINE),
+                Stroke::new(1.0_f32, theme::p().line),
             );
             p.line_segment(
                 [c - egui::vec2(0.0, radius), c + egui::vec2(0.0, radius)],
-                Stroke::new(1.0_f32, theme::LINE),
+                Stroke::new(1.0_f32, theme::p().line),
             );
             let fx = f32::from(x) / 32767.0;
             let fy = f32::from(y) / 32767.0;
             let dot = c + egui::vec2(fx * radius, -fy * radius);
             let color = if report.is_some() {
-                theme::ACCENT
+                theme::p().accent
             } else {
-                theme::TEXT_DIM
+                theme::p().text_dim
             };
             p.line_segment([c, dot], Stroke::new(2.0_f32, color.gamma_multiply(0.5)));
             p.circle_filled(dot, 7.0, color);
@@ -542,7 +537,7 @@ impl PadApp {
                 Align2::CENTER_TOP,
                 format!("{name}   {x:>6}, {y:>6}"),
                 FontId::monospace(12.0),
-                theme::TEXT_DIM,
+                theme::p().text_dim,
             );
         }
         if let Some(rep) = report {
@@ -579,19 +574,19 @@ fn buttons_line(ui: &mut egui::Ui, r: &Report) {
         (BTN_DPAD_RIGHT, "D Rt"),
     ];
     ui.horizontal_wrapped(|ui| {
-        ui.label(egui::RichText::new("Buttons:").color(theme::TEXT_DIM));
+        ui.label(egui::RichText::new("Buttons:").color(theme::p().text_dim));
         let mut any = false;
         for (bit, n) in names {
             if r.buttons & bit != 0 {
                 any = true;
-                ui.label(egui::RichText::new(n).color(theme::ACCENT).strong());
+                ui.label(egui::RichText::new(n).color(theme::p().accent).strong());
             }
         }
         if r.left_trigger > 0 {
             any = true;
             ui.label(
                 egui::RichText::new(format!("LT {}", r.left_trigger))
-                    .color(theme::ACCENT)
+                    .color(theme::p().accent)
                     .strong(),
             );
         }
@@ -599,12 +594,12 @@ fn buttons_line(ui: &mut egui::Ui, r: &Report) {
             any = true;
             ui.label(
                 egui::RichText::new(format!("RT {}", r.right_trigger))
-                    .color(theme::ACCENT)
+                    .color(theme::p().accent)
                     .strong(),
             );
         }
         if !any {
-            ui.label(egui::RichText::new("none").color(theme::TEXT_DIM));
+            ui.label(egui::RichText::new("none").color(theme::p().text_dim));
         }
     });
 }

@@ -76,18 +76,20 @@ jobs:
             kill $pid || true
             wait $pid || true
           }
-          shoot keyboard PADBRIDGE_TAB=keyboard PADBRIDGE_SELECT=W
-          shoot mouse PADBRIDGE_TAB=mouse PADBRIDGE_SELECT=MouseLeft
-          shoot controller PADBRIDGE_TAB=controller PADBRIDGE_SELECT_OUTPUT=A
-          shoot stick PADBRIDGE_TAB=stick
-          shoot settings PADBRIDGE_TAB=settings
+          for theme in aurora frost; do
+            shoot $theme-keyboard PADBRIDGE_THEME=$theme PADBRIDGE_TAB=keyboard PADBRIDGE_SELECT=W
+            shoot $theme-mouse PADBRIDGE_THEME=$theme PADBRIDGE_TAB=mouse PADBRIDGE_SELECT=MouseLeft
+            shoot $theme-controller PADBRIDGE_THEME=$theme PADBRIDGE_TAB=controller PADBRIDGE_SELECT_OUTPUT=A
+            shoot $theme-stick PADBRIDGE_THEME=$theme PADBRIDGE_TAB=stick
+            shoot $theme-settings PADBRIDGE_THEME=$theme PADBRIDGE_TAB=settings
+          done
           ls -la shots
       - name: publish screenshots
-        if: github.ref == 'refs/heads/main'
         run: |
+          if [ "$GITHUB_REF_NAME" = "main" ]; then target=screenshots; else target="screenshots-$GITHUB_REF_NAME"; fi
           cd shots
           git init -q
           git checkout -q -b screenshots
           git add .
           git -c user.name=ci -c user.email=ci@users.noreply.github.com commit -q -m "screenshots for ${GITHUB_SHA}"
-          git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" screenshots
+          git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}" "screenshots:$target"

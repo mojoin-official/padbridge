@@ -60,8 +60,8 @@ fn slot_canvas(
     let sub_size = (unit * 0.22).clamp(8.0, 13.0);
     for (i, (s, r)) in slots.iter().zip(&rects).enumerate() {
         let lk = look(s, hovered == Some(i));
-        let rounding = (unit * 0.14).clamp(3.0, 8.0);
-        painter.rect(*r, rounding, lk.fill, lk.stroke);
+        let rounding = (unit * 0.18).clamp(4.0, 12.0);
+        theme::glass_rect(&painter, *r, rounding, lk.fill, lk.stroke);
         let max_w = r.width() - 6.0;
         match &lk.sub {
             Some(sub) => {
@@ -79,7 +79,7 @@ fn slot_canvas(
                     sub,
                     sub_size,
                     max_w,
-                    theme::ACCENT,
+                    theme::p().accent,
                 );
             }
             None => {
@@ -142,69 +142,100 @@ fn draw_mouse_body(p: &egui::Painter, r: Rect, unit: f32) {
     p.rect(
         body,
         4.2 * unit,
-        theme::BODY,
-        Stroke::new(2.0_f32, theme::LINE),
+        theme::p().body,
+        Stroke::new(2.0_f32, theme::p().line),
     );
     // palm shading
     let palm = Rect::from_min_max(
         Pos2::new(body.left() + 1.4 * unit, r.top() + 7.6 * unit),
         Pos2::new(body.right() - 1.4 * unit, body.bottom() - 1.2 * unit),
     );
-    p.rect_filled(palm, 3.0 * unit, Color32::from_rgb(33, 37, 46));
+    p.rect_filled(palm, 3.0 * unit, theme::p().inset);
     p.text(
         Pos2::new(r.center().x, r.top() + 11.6 * unit),
         Align2::CENTER_CENTER,
         "Movement: see 'Mouse to stick'",
         FontId::proportional((unit * 0.32).clamp(10.0, 15.0)),
-        theme::TEXT_DIM,
+        theme::p().text_dim,
     );
 }
 
 fn draw_pad_body(p: &egui::Painter, r: Rect, unit: f32) {
     let u = |x: f32, y: f32| Pos2::new(r.left() + x * unit, r.top() + y * unit);
-    let fill = theme::BODY;
-    // grips
-    p.circle_filled(u(4.4, 7.6), 4.1 * unit, fill);
-    p.circle_filled(u(15.6, 7.6), 4.1 * unit, fill);
-    // main body
-    p.rect_filled(
-        Rect::from_min_max(u(2.0, 2.2), u(18.0, 9.6)),
-        3.0 * unit,
-        fill,
-    );
+    // The body is the union of a rounded rectangle and two grip circles. Drawn as one shape
+    // (not three overlapping ones) so translucent glass shows no darker seams.
+    let inside = |x: f32, y: f32| {
+        let in_circle = |cx: f32, cy: f32, r: f32| (x - cx).powi(2) + (y - cy).powi(2) <= r * r;
+        let in_rrect = {
+            let (x0, y0, x1, y1, rr) = (2.0, 2.2, 18.0, 9.6, 3.0);
+            let qx = (x0 + rr - x).max(x - (x1 - rr)).max(0.0);
+            let qy = (y0 + rr - y).max(y - (y1 - rr)).max(0.0);
+            x >= x0 && x <= x1 && y >= y0 && y <= y1 && qx * qx + qy * qy <= rr * rr
+        };
+        in_rrect || in_circle(4.4, 7.6, 4.1) || in_circle(15.6, 7.6, 4.1)
+    };
+    let (cx, cy) = (10.0, 6.0);
+    let mut outline = Vec::with_capacity(180);
+    for i in 0..180 {
+        let a = i as f32 / 180.0 * std::f32::consts::TAU;
+        let (dx, dy) = (a.cos(), a.sin());
+        let mut d = 0.0;
+        let mut last = 0.0;
+        while d < 12.0 {
+            if inside(cx + dx * d, cy + dy * d) {
+                last = d;
+            }
+            d += 0.04;
+        }
+        outline.push(u(cx + dx * last, cy + dy * last));
+    }
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(u(cx, cy), theme::p().body);
+    for pt in &outline {
+        mesh.colored_vertex(*pt, theme::p().body);
+    }
+    let n = outline.len() as u32;
+    for i in 0..n {
+        mesh.add_triangle(0, 1 + i, 1 + (i + 1) % n);
+    }
+    p.add(egui::Shape::mesh(mesh));
+    p.add(egui::Shape::closed_line(
+        outline,
+        Stroke::new(1.5_f32, theme::p().line),
+    ));
     // stick wells
-    p.circle_filled(u(4.0, 4.5), 2.0 * unit, Color32::from_rgb(30, 33, 41));
-    p.circle_filled(u(12.55, 7.62), 1.75 * unit, Color32::from_rgb(30, 33, 41));
-    p.circle_filled(u(16.0, 4.55), 2.0 * unit, Color32::from_rgb(30, 33, 41));
-    p.circle_filled(u(7.45, 7.62), 1.75 * unit, Color32::from_rgb(30, 33, 41));
+    p.circle_filled(u(4.0, 4.5), 2.0 * unit, theme::p().inset);
+    p.circle_filled(u(12.55, 7.62), 1.75 * unit, theme::p().inset);
+    p.circle_filled(u(16.0, 4.55), 2.0 * unit, theme::p().inset);
+    p.circle_filled(u(7.45, 7.62), 1.75 * unit, theme::p().inset);
     let small = FontId::proportional((unit * 0.32).clamp(9.0, 13.0));
     p.text(
         u(4.0, 6.85),
         Align2::CENTER_TOP,
         "Left stick",
         small.clone(),
-        theme::TEXT_DIM,
+        theme::p().text_dim,
     );
     p.text(
         u(16.0, 6.85),
         Align2::CENTER_TOP,
         "Face",
         small.clone(),
-        theme::TEXT_DIM,
+        theme::p().text_dim,
     );
     p.text(
         u(7.45, 9.5),
         Align2::CENTER_TOP,
         "D-pad",
         small.clone(),
-        theme::TEXT_DIM,
+        theme::p().text_dim,
     );
     p.text(
         u(12.55, 9.5),
         Align2::CENTER_TOP,
         "Right stick",
         small,
-        theme::TEXT_DIM,
+        theme::p().text_dim,
     );
 }
 
@@ -213,21 +244,13 @@ impl PadApp {
         egui::SidePanel::right("inspector")
             .exact_width(360.0)
             .resizable(false)
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::PANEL)
-                    .inner_margin(egui::Margin::same(16.0)),
-            )
+            .frame(theme::side())
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| self.input_inspector(ui));
             });
 
         egui::CentralPanel::default()
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::BG)
-                    .inner_margin(egui::Margin::same(16.0)),
-            )
+            .frame(theme::clear(16.0))
             .show(ctx, |ui| {
                 let keyboard = self.tab == Tab::Keyboard;
                 ui.label(
@@ -236,7 +259,7 @@ impl PadApp {
                     } else {
                         "Click a mouse button or wheel direction to choose what it does."
                     })
-                    .color(theme::TEXT_DIM),
+                    .color(theme::p().text_dim),
                 );
                 let (slots, size, max_h): (&[Slot], (f32, f32), f32) = if keyboard {
                     (
@@ -268,22 +291,22 @@ impl PadApp {
                         let outs = bindings.outputs(src);
                         let bound = !outs.is_empty();
                         let fill = match (bound, hover) {
-                            (true, true) => theme::ACCENT_HI,
-                            (true, false) => theme::ACCENT_DIM,
-                            (false, true) => theme::CARD_HI,
-                            (false, false) => theme::CARD,
+                            (true, true) => theme::p().accent_hi,
+                            (true, false) => theme::p().accent_dim,
+                            (false, true) => theme::p().card_hi,
+                            (false, false) => theme::p().card,
                         };
                         let stroke = if selected == Some(src) {
-                            Stroke::new(2.5_f32, theme::SELECT)
+                            Stroke::new(2.5_f32, theme::p().select)
                         } else if bound {
-                            Stroke::new(1.0_f32, theme::ACCENT_HI)
+                            Stroke::new(1.0_f32, theme::p().accent_hi)
                         } else {
-                            Stroke::new(1.0_f32, theme::LINE)
+                            Stroke::new(1.0_f32, theme::p().line)
                         };
                         SlotLook {
                             fill,
                             stroke,
-                            text: theme::TEXT,
+                            text: theme::p().text,
                             sub: outputs_summary(outs),
                         }
                     },
@@ -342,7 +365,11 @@ impl PadApp {
             }
             for o in outs {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(o.name()).color(theme::ACCENT).strong());
+                    ui.label(
+                        egui::RichText::new(o.name())
+                            .color(theme::p().accent)
+                            .strong(),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("Remove").clicked() {
                             self.cfg.bindings.remove(src, o);
@@ -360,20 +387,20 @@ impl PadApp {
             ui.label(
                 egui::RichText::new(*group)
                     .size(12.5)
-                    .color(theme::TEXT_DIM),
+                    .color(theme::p().text_dim),
             );
             ui.horizontal_wrapped(|ui| {
                 for &o in *outs {
                     let on = self.cfg.bindings.outputs(src).contains(&o);
                     let text = egui::RichText::new(o.name()).size(13.0).color(if on {
-                        theme::BG
+                        theme::p().on_accent
                     } else {
-                        theme::TEXT
+                        theme::p().text
                     });
                     let b = egui::Button::new(text).fill(if on {
-                        theme::ACCENT
+                        theme::p().accent
                     } else {
-                        theme::CARD_HI
+                        theme::p().card_hi
                     });
                     let resp = ui.add(b);
                     let resp = if o == Output::Walk {
@@ -407,27 +434,19 @@ impl PadApp {
         egui::SidePanel::right("pad-inspector")
             .exact_width(360.0)
             .resizable(false)
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::PANEL)
-                    .inner_margin(egui::Margin::same(16.0)),
-            )
+            .frame(theme::side())
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| self.output_inspector(ui));
             });
 
         egui::CentralPanel::default()
-            .frame(
-                egui::Frame::default()
-                    .fill(theme::BG)
-                    .inner_margin(egui::Margin::same(16.0)),
-            )
+            .frame(theme::clear(16.0))
             .show(ctx, |ui| {
                 ui.label(
                     egui::RichText::new(
                         "Click a controller button to see and change which keys drive it.",
                     )
-                    .color(theme::TEXT_DIM),
+                    .color(theme::p().text_dim),
                 );
                 let selected = self.selected_output;
                 let bindings = &self.cfg.bindings;
@@ -443,15 +462,15 @@ impl PadApp {
                         let srcs = bindings.sources_for(out);
                         let bound = !srcs.is_empty();
                         let fill = match (bound, hover) {
-                            (true, true) => theme::ACCENT_HI,
-                            (true, false) => theme::ACCENT_DIM,
-                            (false, true) => theme::CARD_HI,
-                            (false, false) => theme::CARD,
+                            (true, true) => theme::p().accent_hi,
+                            (true, false) => theme::p().accent_dim,
+                            (false, true) => theme::p().card_hi,
+                            (false, false) => theme::p().card,
                         };
                         let stroke = if selected == Some(out) {
-                            Stroke::new(2.5_f32, theme::SELECT)
+                            Stroke::new(2.5_f32, theme::p().select)
                         } else {
-                            Stroke::new(1.0_f32, theme::LINE)
+                            Stroke::new(1.0_f32, theme::p().line)
                         };
                         let sub = match srcs.as_slice() {
                             [] => None,
@@ -461,7 +480,7 @@ impl PadApp {
                         SlotLook {
                             fill,
                             stroke,
-                            text: theme::TEXT,
+                            text: theme::p().text,
                             sub,
                         }
                     },
@@ -513,7 +532,7 @@ impl PadApp {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(s.to_string())
-                            .color(theme::ACCENT)
+                            .color(theme::p().accent)
                             .strong(),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -561,14 +580,14 @@ impl PadApp {
 
 fn legend(ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
-        swatch(ui, theme::ACCENT_DIM, theme::ACCENT_HI);
-        ui.label(egui::RichText::new("mapped").color(theme::TEXT_DIM));
+        swatch(ui, theme::p().accent_dim, theme::p().accent_hi);
+        ui.label(egui::RichText::new("mapped").color(theme::p().text_dim));
         ui.add_space(10.0);
-        swatch(ui, theme::CARD, theme::LINE);
-        ui.label(egui::RichText::new("not mapped").color(theme::TEXT_DIM));
+        swatch(ui, theme::p().card, theme::p().line);
+        ui.label(egui::RichText::new("not mapped").color(theme::p().text_dim));
         ui.add_space(10.0);
-        swatch(ui, theme::CARD, theme::SELECT);
-        ui.label(egui::RichText::new("selected").color(theme::TEXT_DIM));
+        swatch(ui, theme::p().card, theme::p().select);
+        ui.label(egui::RichText::new("selected").color(theme::p().text_dim));
     });
 }
 
