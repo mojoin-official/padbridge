@@ -20,7 +20,7 @@ impl PadApp {
                     theme::title(ui, "Response");
                     theme::help(
                         ui,
-                        "Green: how far padbridge pushes the stick. Grey: the camera speed the \
+                        "Coloured line: how far padbridge pushes the stick. Grey line: the camera speed the \
                          game ends up with, which matches the mouse 1:1 up to full speed.",
                     );
                     ui.add_space(6.0);
