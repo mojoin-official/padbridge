@@ -353,37 +353,49 @@ fn filter_mouse(sh: &Shared, m: &mut MouseStroke) -> bool {
 /// Reads every keyboard and mouse event from the driver until told to stop, passing on only
 /// what is not captured.
 fn driver_loop(sh: &Shared, drv: &Driver) {
+    // Fast gaming mice report up to 8000 times a second, so events are handled in batches.
+    const BATCH: usize = 64;
     let mut keys = KeyDecoder::default();
     let mut pause_swallowed = false;
-    let mut buf = StrokeBuf::default();
+    let mut input = [StrokeBuf::default(); BATCH];
+    let mut output = [StrokeBuf::default(); BATCH];
     while !sh.quit.load(Ordering::Acquire) {
         let device = drv.wait(50);
-        if device <= 0 || !drv.receive(device, &mut buf) {
+        if device <= 0 {
             continue;
         }
-        let forward = if drv.is_keyboard(device) {
-            match keys.decode(&buf.key()) {
-                KeyEvent::Ignore => true,
-                KeyEvent::PauseTail(_) => !pause_swallowed,
-                KeyEvent::Key(id, edge) => {
-                    let swallow = dispatch(sh, Source::Key(id), edge);
-                    if id == KEY_PAUSE {
-                        pause_swallowed = swallow;
+        let n = drv.receive(device, &mut input);
+        let keyboard = drv.is_keyboard(device);
+        let mouse = drv.is_mouse(device);
+        let mut kept = 0;
+        for buf in &input[..n] {
+            let mut buf = *buf;
+            let forward = if keyboard {
+                match keys.decode(&buf.key()) {
+                    KeyEvent::Ignore => true,
+                    KeyEvent::PauseTail(_) => !pause_swallowed,
+                    KeyEvent::Key(id, edge) => {
+                        let swallow = dispatch(sh, Source::Key(id), edge);
+                        if id == KEY_PAUSE {
+                            pause_swallowed = swallow;
+                        }
+                        !swallow
                     }
-                    !swallow
                 }
+            } else if mouse {
+                let mut m = buf.mouse();
+                let keep = filter_mouse(sh, &mut m);
+                buf.set_mouse(&m);
+                keep
+            } else {
+                true
+            };
+            if forward {
+                output[kept] = buf;
+                kept += 1;
             }
-        } else if drv.is_mouse(device) {
-            let mut m = buf.mouse();
-            let keep = filter_mouse(sh, &mut m);
-            buf.set_mouse(&m);
-            keep
-        } else {
-            true
-        };
-        if forward {
-            drv.send(device, &buf);
         }
+        drv.send(device, &mut output[..kept]);
     }
 }
 
@@ -820,7 +832,17 @@ fn run_mapping(
 
     // Preferred: the driver, so captured input never reaches any program.
     let driver = match method {
-        InputMethod::Auto => Driver::open().ok(),
+        InputMethod::Auto => match Driver::open() {
+            Ok(d) => Some(d),
+            Err(e) => {
+                let _ = shared.notices.send(Notice::Info(format!(
+                    "Interception driver not used ({}); using Windows hooks. {}",
+                    e.short(),
+                    e.advice()
+                )));
+                None
+            }
+        },
         InputMethod::Hooks => None,
     };
     if let Some(drv) = driver {

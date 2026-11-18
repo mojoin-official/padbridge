@@ -93,6 +93,7 @@ pub struct PadApp {
     pub calib: [[f64; 2]; 2],
     /// Whether the Interception driver can be used (checked at start and on request).
     pub driver_status: Result<(), DriverError>,
+    pub driver_checked: Instant,
     /// "Pick the game window" countdown.
     pub pick_deadline: Option<Instant>,
 }
@@ -121,6 +122,7 @@ impl PadApp {
             new_name: String::new(),
             calib: [[16000.0, 2.0], [16000.0, 2.0]],
             driver_status: padbridge::driver::status(),
+            driver_checked: Instant::now(),
             pick_deadline: None,
         };
         match ProfileStore::open(ProfileStore::default_dir()) {

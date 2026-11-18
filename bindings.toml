@@ -78,8 +78,9 @@ curve_exponent = 1.0
 
 # Motion faster than the stick can express (see full_deflection_cps) waits in a queue and is
 # played back at full stick, so distance is preserved. This caps how much may queue (ms of full
-# stick); anything beyond is dropped.
-max_backlog_ms = 300
+# stick); anything beyond is dropped. Higher = exact distance on fast flicks, but the camera keeps
+# turning after your hand stops (feels like moving through honey). Lower = snappier.
+max_backlog_ms = 50
 
 # While mapping is on, stop the mouse moving the desktop cursor.
 swallow_motion = true

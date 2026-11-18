@@ -205,15 +205,86 @@ impl PadApp {
     }
 
     fn motion_card(&mut self, ui: &mut egui::Ui) {
-        let m = &mut self.cfg.mouse;
+        // (name, smoothing ms, catch-up ms, description)
+        const PRESETS: [(&str, f64, f64, &str); 3] = [
+            (
+                "Snappy",
+                6.0,
+                0.0,
+                "Lowest lag. Very fast flicks are cut at the stick's top speed.",
+            ),
+            (
+                "Balanced",
+                10.0,
+                50.0,
+                "Default. Short catch-up after fast flicks.",
+            ),
+            (
+                "Exact distance",
+                16.0,
+                300.0,
+                "Every count is played out, so fast flicks land exactly but keep turning briefly.",
+            ),
+        ];
         theme::card().show(ui, |ui| {
             ui.set_width(ui.available_width());
             theme::title(ui, "Motion feel (both axes)");
             ui.add_space(4.0);
+
+            ui.horizontal(|ui| {
+                ui.label("Preset");
+                for (name, smooth, catch, desc) in PRESETS {
+                    let m = &self.cfg.mouse;
+                    let active = m.smoothing_ms == smooth && m.max_backlog_ms == catch;
+                    let text = egui::RichText::new(name).color(if active {
+                        theme::BG
+                    } else {
+                        theme::TEXT
+                    });
+                    let b = egui::Button::new(text).fill(if active {
+                        theme::ACCENT
+                    } else {
+                        theme::CARD_HI
+                    });
+                    if ui.add(b).on_hover_text(desc).clicked() {
+                        self.cfg.mouse.smoothing_ms = smooth;
+                        self.cfg.mouse.max_backlog_ms = catch;
+                    }
+                }
+            });
+            ui.add_space(6.0);
+
+            // One speed control for both axes, keeping their ratio.
+            let current = self.cfg.axes.first().map(|a| a.sensitivity);
             egui::Grid::new("motion-grid")
                 .num_columns(3)
                 .spacing([14.0, 10.0])
                 .show(ui, |ui| {
+                    ui.label("Overall speed");
+                    match current {
+                        Some(old) => {
+                            let mut v = old;
+                            let r = ui.add(
+                                egui::Slider::new(&mut v, 0.05..=10.0)
+                                    .logarithmic(true)
+                                    .max_decimals(2),
+                            );
+                            if r.changed() && old > 0.0 {
+                                let k = v / old;
+                                for a in &mut self.cfg.axes {
+                                    a.sensitivity = (a.sensitivity * k).clamp(0.01, 100.0);
+                                }
+                            }
+                            theme::help(ui, "Scales both mouse axes together.");
+                        }
+                        None => {
+                            ui.label("-");
+                            theme::help(ui, "No mouse axis is enabled above.");
+                        }
+                    }
+                    ui.end_row();
+
+                    let m = &mut self.cfg.mouse;
                     ui.label("Smoothing");
                     ui.add(
                         egui::Slider::new(&mut m.smoothing_ms, 0.0..=50.0)
@@ -221,6 +292,18 @@ impl PadApp {
                             .max_decimals(0),
                     );
                     theme::help(ui, "About one game frame: 16 at 60 fps, 7 at 144 fps.");
+                    ui.end_row();
+
+                    ui.label("Catch-up after flicks");
+                    ui.add(
+                        egui::Slider::new(&mut m.max_backlog_ms, 0.0..=1000.0)
+                            .suffix(" ms")
+                            .max_decimals(0),
+                    );
+                    theme::help(
+                        ui,
+                        "If the camera keeps turning after you stop, lower this.",
+                    );
                     ui.end_row();
 
                     ui.label("Game deadzone");
@@ -240,15 +323,6 @@ impl PadApp {
                     theme::help(ui, "1 = linear. Raise if small movements feel too slow.");
                     ui.end_row();
 
-                    ui.label("Catch-up limit");
-                    ui.add(
-                        egui::Slider::new(&mut m.max_backlog_ms, 0.0..=2000.0)
-                            .suffix(" ms")
-                            .max_decimals(0),
-                    );
-                    theme::help(ui, "Flicks faster than the stick finish within this time.");
-                    ui.end_row();
-
                     ui.label("Freeze the cursor");
                     ui.checkbox(&mut m.swallow_motion, "");
                     theme::help(
@@ -257,6 +331,25 @@ impl PadApp {
                     );
                     ui.end_row();
                 });
+        });
+        ui.add_space(12.0);
+        theme::card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            theme::title(ui, "Feels slow or floaty?");
+            for line in [
+                "1. Camera keeps moving after your hand stops: lower 'Catch-up after flicks', \
+                 or pick Snappy.",
+                "2. Everything is too slow: raise 'Overall speed'. Watch the live preview: normal \
+                 movements should push the green dot well out from the centre.",
+                "3. Fast turns hit a ceiling: that is the game's top stick speed. In the game, set \
+                 controller look sensitivity to maximum and turn off look acceleration / aim \
+                 slowdown; padbridge cannot turn faster than the stick allows.",
+                "4. Small movements do nothing, then jump: raise 'Game deadzone'. Small movements \
+                 crawl: raise 'Game response curve'.",
+                "5. Apply changes while running with 'Apply changes' at the top.",
+            ] {
+                theme::help(ui, line);
+            }
         });
     }
 

@@ -623,7 +623,7 @@ fn parse_mouse(doc: &Document) -> Result<MouseCfg, ConfigError> {
         smoothing_ms: r.number("smoothing_ms", 10.0, 0.0, 100.0)?,
         deadzone: r.number("deadzone", 0.0, 0.0, 0.95)?,
         curve_exponent: r.number("curve_exponent", 1.0, 0.1, 10.0)?,
-        max_backlog_ms: r.number("max_backlog_ms", 300.0, 0.0, 5000.0)?,
+        max_backlog_ms: r.number("max_backlog_ms", 50.0, 0.0, 5000.0)?,
         swallow_motion: r.boolean("swallow_motion", true)?,
     };
     r.finish(KEYS)?;

@@ -293,6 +293,15 @@ api! {
         fn LoadLibraryW(name: *const u16) -> HMODULE;
         fn GetProcAddress(module: HMODULE, name: *const u8) -> *const c_void;
         fn FreeLibrary(module: HMODULE) -> BOOL;
+        fn CreateFileW(
+            name: *const u16,
+            access: u32,
+            share: u32,
+            security: *mut c_void,
+            disposition: u32,
+            flags: u32,
+            template: HANDLE,
+        ) -> HANDLE;
         fn OpenProcess(access: u32, inherit: BOOL, process_id: u32) -> HANDLE;
         fn QueryFullProcessImageNameW(
             process: HANDLE,

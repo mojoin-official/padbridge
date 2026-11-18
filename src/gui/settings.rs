@@ -126,33 +126,47 @@ impl PadApp {
                     ui.end_row();
 
                     ui.label("Interception driver");
-                    let (text, color) = match self.driver_status {
+                    let (text, color) = match &self.driver_status {
                         Ok(()) => ("Installed and ready", theme::ACCENT),
-                        Err(DriverError::NotInstalled) => ("Not installed", theme::SELECT),
-                        Err(DriverError::DllMissing) => ("interception.dll missing", theme::SELECT),
                         Err(DriverError::Unsupported) => ("Windows only", theme::TEXT_DIM),
+                        Err(e) => (e.short(), theme::SELECT),
                     };
                     ui.label(egui::RichText::new(text).color(color).strong());
-                    if ui
-                        .add_enabled(self.runtime.is_none(), egui::Button::new("Check again"))
-                        .clicked()
-                    {
-                        self.driver_status = padbridge::driver::status();
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.button("Check again").clicked() {
+                            self.driver_status = padbridge::driver::status();
+                            self.driver_checked = Instant::now();
+                        }
+                        let ago = self.driver_checked.elapsed().as_secs();
+                        let when = if ago < 2 {
+                            "checked just now".to_string()
+                        } else if ago < 120 {
+                            format!("checked {ago} s ago")
+                        } else {
+                            format!("checked {} min ago", ago / 60)
+                        };
+                        ui.label(egui::RichText::new(when).size(12.5).color(theme::TEXT_DIM));
+                    });
                     ui.end_row();
                 });
-            if let Err(e) = self.driver_status {
-                if e != DriverError::Unsupported {
+            if let Some(rt) = &self.runtime {
+                ui.add_space(4.0);
+                theme::help(
+                    ui,
+                    &format!("Mapping is running with: {}.", rt.backend().describe()),
+                );
+            }
+            if let Err(e) = &self.driver_status {
+                if *e != DriverError::Unsupported {
                     ui.add_space(4.0);
-                    theme::help(
-                        ui,
-                        "To install it: download Interception.zip from \
-                         github.com/oblitum/Interception/releases, open a Command Prompt as \
-                         administrator in its 'command line installer' folder, run \
-                         install-interception.exe /install, then restart the PC. Keep \
-                         interception.dll next to padbridge.exe (it is included in the download).",
-                    );
-                    theme::help(ui, &format!("Status detail: {e}."));
+                    egui::Frame::default()
+                        .fill(theme::BG)
+                        .rounding(6.0)
+                        .inner_margin(egui::Margin::symmetric(12.0, 8.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.label(egui::RichText::new(e.advice()).color(theme::TEXT));
+                        });
                 }
             }
         });
