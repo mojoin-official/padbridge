@@ -210,9 +210,14 @@ impl PadApp {
                         "Off: Start only arms padbridge; press the hotkey to capture.",
                     );
                     ui.end_row();
-                    ui.label("Beep when capture changes");
-                    ui.checkbox(&mut self.cfg.general.beep_on_toggle, "");
-                    theme::help(ui, "Handy in fullscreen games.");
+                    ui.label("Tone when capture changes");
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut self.cfg.general.beep_on_toggle, "");
+                        if ui.small_button("Test sound").clicked() {
+                            padbridge::sound::play_toggle(true);
+                        }
+                    });
+                    theme::help(ui, "A short quiet tone that plays alongside game audio.");
                     ui.end_row();
                 });
         });

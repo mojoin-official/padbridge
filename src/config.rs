@@ -581,7 +581,7 @@ fn parse_general(doc: &Document) -> Result<General, ConfigError> {
         walk_scale: r.number("walk_scale", 0.5, 0.05, 1.0)?,
         trigger_value: r.integer("trigger_value", 255, 1, 255)? as u8,
         wheel_pulse_ms: r.number("wheel_pulse_ms", 40.0, 5.0, 500.0)?,
-        beep_on_toggle: r.boolean("beep_on_toggle", true)?,
+        beep_on_toggle: r.boolean("beep_on_toggle", false)?,
         input_method: match r.choice("input_method", &["auto", "hooks"], 0)? {
             0 => InputMethod::Auto,
             _ => InputMethod::Hooks,

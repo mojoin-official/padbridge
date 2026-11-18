@@ -586,7 +586,7 @@ fn logger_loop(rx: mpsc::Receiver<Notice>, out: mpsc::Sender<String>, beep: bool
         let line = match n {
             Notice::Toggled(on) => {
                 if beep {
-                    unsafe { Beep(if on { 880 } else { 440 }, 60) };
+                    crate::sound::play_toggle(on);
                 }
                 describe(Action::Toggled(on)).to_string()
             }
@@ -625,7 +625,8 @@ fn output_thread(
             }
         }
     };
-    unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL) };
+    // Above normal but not real-time-like: it sleeps on a precise timer, so it needs no more.
+    unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST) };
 
     let mut sent = Report::default();
     if let Err(e) = sink.submit(&sent) {

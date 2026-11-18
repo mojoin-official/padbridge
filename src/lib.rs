@@ -19,6 +19,7 @@ pub mod mouse;
 pub mod pad;
 pub mod profiles;
 pub mod sink;
+pub mod sound;
 pub mod strokes;
 pub mod sys;
 pub mod util;

@@ -319,8 +319,13 @@ api! {
     {
         fn timeBeginPeriod(period: u32) -> u32;
         fn timeEndPeriod(period: u32) -> u32;
+        fn PlaySoundW(sound: *const u16, module: HMODULE, flags: u32) -> BOOL;
     }
 }
+
+pub const SND_ASYNC: u32 = 0x0001;
+pub const SND_NODEFAULT: u32 = 0x0002;
+pub const SND_MEMORY: u32 = 0x0004;
 
 /// UTF-16, NUL-terminated.
 pub fn wide(s: &str) -> Vec<u16> {

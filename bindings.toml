@@ -48,8 +48,9 @@ trigger_value = 255
 # One mouse-wheel notch becomes a button press this long (and the same gap before the next).
 wheel_pulse_ms = 40
 
-# Short beep when mapping is toggled (useful in fullscreen games).
-beep_on_toggle = true
+# Short tone when capture is switched on or off (useful in fullscreen games). Plays through
+# the normal Windows mixer, alongside game audio.
+beep_on_toggle = false
 
 # How keyboard and mouse are read:
 #   "auto"  - the Interception driver when it is installed: captured input is removed below
