@@ -1,0 +1,132 @@
+# padbridge configuration
+#
+# Keyboard and mouse in, a virtual Xbox 360 controller out. Games that read XInput (and
+# GameInput, which enumerates XInput-class pads) see an ordinary controller.
+#
+# Check this file without starting anything:   padbridge --check
+# Find the name of any key or button:          padbridge --sniff
+# List every valid name:                       padbridge --list-names
+#
+# Names are case-insensitive and ignore "_", "-" and spaces. Keys are named by PHYSICAL position
+# on a US keyboard, so WASD stays WASD on any layout. Unknown names are errors, never ignored.
+
+[general]
+# Start with mapping active. Toggle at any time with toggle_hotkey.
+start_enabled = true
+
+# Hotkeys always work, even while every key is captured, and are never passed to the game.
+# "Ctrl", "Shift", "Alt" and "Win" accept either side.
+toggle_hotkey = "Ctrl+Alt+F10"
+exit_hotkey = "Ctrl+Alt+F12"
+
+# How often the controller state is updated (60..1000). Higher = lower latency, more CPU.
+output_hz = 500
+
+# Ignore input injected by other programs (on-screen keyboards, other remappers).
+ignore_injected = true
+
+# Input with no binding while mapping is on:
+#   "pass"  - still reaches the game/desktop (Win key, Alt+Tab keep working)   [default]
+#   "block" - swallowed, so the game sees ONLY the virtual controller
+unbound = "pass"
+
+# Opposite directions held together (A+D): "last" = the most recent press wins, "neutral" = cancel.
+socd = "last"
+
+# Make keyboard diagonals a full-length circle like a real stick (W+D = 0.707, 0.707).
+normalize_diagonals = true
+
+# Time for a keyboard-driven stick to travel from centre to full. 0 = instant.
+stick_ramp_ms = 0
+
+# Stick scale while the Walk output is held (keyboard-driven left stick only).
+walk_scale = 0.5
+
+# Trigger value when a bound key is held (1..255).
+trigger_value = 255
+
+# One mouse-wheel notch becomes a button press this long (and the same gap before the next).
+wheel_pulse_ms = 40
+
+# Short beep when mapping is toggled (useful in fullscreen games).
+beep_on_toggle = true
+
+[mouse]
+# Mouse motion is spread over this window before it reaches the stick. Games sample a stick once
+# per frame; if this is shorter than one game frame, motion can be missed. Rule of thumb: about
+# one frame time of your game (16 for 60 fps, 7 for 144 fps). 0 = no smoothing.
+smoothing_ms = 10
+
+# The game's inner deadzone as a fraction of full stick. Stick output is lifted past it so the
+# smallest mouse movement is not swallowed. XInput's standard right-stick deadzone is 0.265, the
+# left-stick one 0.240. Raise it until slow movement just starts moving the camera.
+deadzone = 0.0
+
+# The game's response curve exponent (1.0 = linear, 2.0 = squared). Compensated exactly.
+curve_exponent = 1.0
+
+# Motion faster than the stick can express (see full_deflection_cps) waits in a queue and is
+# played back at full stick, so distance is preserved. This caps how much may queue (ms of full
+# stick); anything beyond is dropped.
+max_backlog_ms = 300
+
+# While mapping is on, stop the mouse moving the desktop cursor.
+swallow_motion = true
+
+# Mouse X and Y are bound independently. Delete a section to leave that axis unbound. Each can
+# target any of: LeftStickX, LeftStickY, RightStickX, RightStickY.
+#
+# CALIBRATION (this is what makes the camera move the same as the mouse would):
+#   full_deflection_cps is the mouse speed, in counts per second, that equals a fully held
+#   stick. Equivalently give two numbers you can measure:
+#     counts_per_360        mouse counts for a 360 degree turn at your normal mouse sensitivity
+#     stick_seconds_per_360 seconds the game takes to turn 360 degrees with the stick fully held
+#   then full_deflection_cps = counts_per_360 / stick_seconds_per_360.
+#   Use one form or the other, not both. Do this per axis if yaw and pitch speeds differ.
+[axis.mouse_x]
+target = "RightStickX"
+sensitivity = 1.0
+invert = false
+full_deflection_cps = 8000
+
+[axis.mouse_y]
+target = "RightStickY"
+sensitivity = 1.0
+invert = false
+full_deflection_cps = 8000
+
+# Controller output = [list of inputs]. One input may appear under several outputs, and several
+# inputs may drive one output.
+#
+# Outputs: A B X Y LB RB LT RT Back Start Guide LeftStickClick RightStickClick
+#          DpadUp DpadDown DpadLeft DpadRight
+#          LeftStickUp/Down/Left/Right  RightStickUp/Down/Left/Right  Walk
+[bindings]
+LeftStickUp = "W"
+LeftStickLeft = "A"
+LeftStickDown = "S"
+LeftStickRight = "D"
+
+A = "Space"
+B = "C"
+X = "R"
+# Scrolling the wheel in either direction switches weapon.
+Y = ["F", "WheelUp", "WheelDown"]
+
+LB = ["Q", "Mouse4"]
+RB = ["E", "Mouse5"]
+LT = "MouseRight"
+RT = "MouseLeft"
+
+LeftStickClick = "LShift"
+RightStickClick = "MouseMiddle"
+
+Back = "Tab"
+Start = "Esc"
+
+DpadUp = ["Up", "1"]
+DpadRight = ["Right", "2"]
+DpadDown = ["Down", "3"]
+DpadLeft = ["Left", "4"]
+
+Walk = "LAlt"

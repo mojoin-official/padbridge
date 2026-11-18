@@ -1,0 +1,27 @@
+[package]
+name = "padbridge"
+version = "0.1.0"
+edition = "2021"
+description = "Remaps keyboard and mouse input to a virtual Xbox 360 (XInput) controller on Windows"
+publish = false
+
+[lib]
+name = "padbridge"
+path = "src/lib.rs"
+
+[[bin]]
+name = "padbridge"
+path = "src/main.rs"
+
+# The only external dependency. It talks to the ViGEmBus driver and is Windows-only;
+# everything else (Win32 FFI included) is written against `std`.
+[target.'cfg(windows)'.dependencies]
+vigem-client = "0.1.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+# Do NOT set panic = "abort": the hook callbacks rely on catch_unwind so that a bug can
+# never unwind across the FFI boundary into Windows.

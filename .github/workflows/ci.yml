@@ -1,0 +1,22 @@
+name: build
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # Build and publish the .exe first, so nothing below can block the download.
+      - run: cargo build --release
+      - uses: actions/upload-artifact@v4
+        with:
+          name: padbridge-windows
+          path: |
+            target/release/padbridge.exe
+            bindings.toml
+            README.md
+      - name: tests
+        run: cargo test
+        continue-on-error: true
