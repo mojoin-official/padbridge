@@ -82,11 +82,22 @@ Then set `deadzone` to the game's value (XInput default: 0.265 right stick, 0.24
 
 ## Known limits
 
-* **Games that read the physical mouse/keyboard directly** (Raw Input or DirectInput) still see
-  the real devices; a hook cannot hide input from them, which would double the camera movement.
-  Hide the physical devices from that game with a tool such as HidHide, whitelisting padbridge.
-* Anti-cheat systems may treat hooks and virtual controllers as tampering. Do not use this with
-  online games that forbid it.
+* **Games that read the physical mouse/keyboard directly** (Raw Input or DirectInput) see the real
+  devices when padbridge uses Windows hooks, and keep flipping their prompts to keyboard and mouse.
+  The fix is the **Interception driver**: padbridge then reads input below Windows and anything
+  it captures never reaches the game. Install it once:
+  1. Download `Interception.zip` from https://github.com/oblitum/Interception/releases.
+  2. In its `command line installer` folder, run `install-interception.exe /install` from an
+     administrator Command Prompt, then restart the PC.
+  3. Keep `interception.dll` next to `padbridge.exe` (the GitHub build includes it).
+  Settings > Game and input shows whether it was found. Interception is free for non-commercial
+  use. Known driver issue: after many USB unplug/replug cycles in one session, newly plugged
+  devices may stop responding until a restart.
+* **Capture only in the game**: set the game's program name in Settings > Game and input (or click
+  Pick game window). Outside the game the keyboard and mouse work normally; switching to the game
+  turns capture on. For the game to see *only* the controller, also set unmapped keys to Block.
+* Anti-cheat systems may treat hooks, input drivers and virtual controllers as tampering, and
+  some block the Interception driver outright. Do not use this with online games that forbid it.
 * Games that apply their own stick **acceleration over time** cannot be matched exactly.
 * Opposite keys (A+D) follow `socd`; keyboard diagonals are normalised to a circle by default.
 * Wheel notches become short presses (`wheel_pulse_ms`), one press per notch, queued.

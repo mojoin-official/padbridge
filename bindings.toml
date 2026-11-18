@@ -51,6 +51,17 @@ wheel_pulse_ms = 40
 # Short beep when mapping is toggled (useful in fullscreen games).
 beep_on_toggle = true
 
+# How keyboard and mouse are read:
+#   "auto"  - the Interception driver when it is installed: captured input is removed below
+#             Windows, so games that read the mouse directly never see it   [default]
+#   "hooks" - low-level hooks only (no driver; such games still see the mouse and may keep
+#             switching their prompts back to keyboard and mouse)
+input_method = "auto"
+
+# Capture only while this program's window is in front, e.g. "game.exe" (Task Manager > Details
+# shows the name). Everywhere else the keyboard and mouse work normally. Empty = always.
+game_exe = ""
+
 [mouse]
 # Mouse motion is spread over this window before it reaches the stick. Games sample a stick once
 # per frame; if this is shorter than one game frame, motion can be missed. Rule of thumb: about

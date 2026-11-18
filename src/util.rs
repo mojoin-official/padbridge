@@ -9,6 +9,22 @@ pub fn norm(s: &str) -> String {
         .collect()
 }
 
+/// The file-name part of a Windows or Unix path.
+pub fn file_name(path: &str) -> &str {
+    path.rsplit(['\\', '/']).next().unwrap_or(path)
+}
+
+/// Whether the running program `exe` (a path or file name) is the one the user named. Only file
+/// names are compared, case-insensitively, and ".exe" may be left off `wanted`.
+pub fn exe_matches(exe: &str, wanted: &str) -> bool {
+    let have = file_name(exe.trim()).to_lowercase();
+    let want = file_name(wanted.trim()).to_lowercase();
+    if want.is_empty() {
+        return false;
+    }
+    have == want || have.strip_suffix(".exe") == Some(want.as_str())
+}
+
 /// Levenshtein distance over chars.
 pub fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();
@@ -45,6 +61,17 @@ mod tests {
     fn norm_ignores_case_and_separators() {
         assert_eq!(norm("Left_Stick Up"), "leftstickup");
         assert_eq!(norm("left-stick-up"), "leftstickup");
+    }
+
+    #[test]
+    fn program_names_match_loosely() {
+        assert!(exe_matches("C:\\Games\\Foo\\Game.EXE", "game.exe"));
+        assert!(exe_matches("C:\\Games\\Foo\\game.exe", "Game"));
+        assert!(exe_matches("game.exe", "D:\\other\\place\\GAME.exe"));
+        assert!(!exe_matches("C:\\x\\gamelauncher.exe", "game.exe"));
+        assert!(!exe_matches("C:\\x\\game.exe", ""));
+        assert!(!exe_matches("C:\\x\\game.exe", "   "));
+        assert_eq!(file_name("a/b\\c.exe"), "c.exe");
     }
 
     #[test]

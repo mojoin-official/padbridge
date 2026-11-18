@@ -258,6 +258,8 @@ api! {
             size: *mut u32,
             header_size: u32,
         ) -> u32;
+        fn GetForegroundWindow() -> HWND;
+        fn GetWindowThreadProcessId(hwnd: HWND, process_id: *mut u32) -> u32;
     }
 }
 
@@ -288,8 +290,20 @@ api! {
         fn GetLastError() -> u32;
         fn SetConsoleCtrlHandler(handler: PHANDLER_ROUTINE, add: BOOL) -> BOOL;
         fn Beep(frequency: u32, duration: u32) -> BOOL;
+        fn LoadLibraryW(name: *const u16) -> HMODULE;
+        fn GetProcAddress(module: HMODULE, name: *const u8) -> *const c_void;
+        fn FreeLibrary(module: HMODULE) -> BOOL;
+        fn OpenProcess(access: u32, inherit: BOOL, process_id: u32) -> HANDLE;
+        fn QueryFullProcessImageNameW(
+            process: HANDLE,
+            flags: u32,
+            name: *mut u16,
+            size: *mut u32,
+        ) -> BOOL;
     }
 }
+
+pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 
 api! {
     #[link(name = "winmm")]

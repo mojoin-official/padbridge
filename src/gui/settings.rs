@@ -4,7 +4,11 @@ use crate::theme;
 use crate::PadApp;
 use eframe::egui;
 use padbridge::bindings::UnboundPolicy;
-use padbridge::config::Socd;
+use padbridge::config::{InputMethod, Socd};
+use padbridge::driver::DriverError;
+use std::time::{Duration, Instant};
+
+const PICK_SECONDS: u64 = 5;
 
 impl PadApp {
     pub fn settings_tab(&mut self, ctx: &egui::Context) {
@@ -17,6 +21,8 @@ impl PadApp {
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.set_max_width(900.0);
+                    self.input_card(ui);
+                    ui.add_space(12.0);
                     self.hotkey_card(ui);
                     ui.add_space(12.0);
                     self.keyboard_card(ui);
@@ -24,6 +30,132 @@ impl PadApp {
                     self.advanced_card(ui);
                 });
             });
+    }
+
+    /// Finishes the "pick the game window" countdown.
+    pub fn poll_pick(&mut self, ctx: &egui::Context) {
+        let Some(deadline) = self.pick_deadline else {
+            return;
+        };
+        let now = Instant::now();
+        if now < deadline {
+            ctx.request_repaint_after(Duration::from_millis(200));
+            return;
+        }
+        self.pick_deadline = None;
+        match padbridge::app::foreground_program() {
+            Some(exe) if exe.to_lowercase().starts_with("padbridge") => {
+                self.error(
+                    "padbridge was still in front. Click Pick again, then switch to the game.",
+                );
+            }
+            Some(exe) => {
+                self.cfg.general.game_exe = exe.clone();
+                self.info(format!("Game set to {exe}. Remember to Save."));
+            }
+            None => self.error("Could not read which program was in front."),
+        }
+    }
+
+    fn input_card(&mut self, ui: &mut egui::Ui) {
+        theme::card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            theme::title(ui, "Game and input");
+            theme::help(
+                ui,
+                "To make the game see only the controller: install the Interception driver, set \
+                 your game below, and (optionally) block unmapped keys further down.",
+            );
+            ui.add_space(6.0);
+            egui::Grid::new("input-grid")
+                .num_columns(3)
+                .spacing([14.0, 10.0])
+                .show(ui, |ui| {
+                    ui.label("Only capture while this is in front");
+                    ui.add_sized(
+                        [220.0, 26.0],
+                        egui::TextEdit::singleline(&mut self.cfg.general.game_exe)
+                            .hint_text("e.g. game.exe (empty = always)"),
+                    );
+                    ui.horizontal(|ui| {
+                        match self.pick_deadline {
+                            Some(d) => {
+                                let left =
+                                    d.saturating_duration_since(Instant::now()).as_secs() + 1;
+                                ui.label(
+                                    egui::RichText::new(format!("Switch to the game… {left}"))
+                                        .color(theme::SELECT),
+                                );
+                            }
+                            None => {
+                                if ui
+                                    .button("Pick game window")
+                                    .on_hover_text(format!(
+                                        "Click, then switch to the game within {PICK_SECONDS} \
+                                         seconds; padbridge reads which program is in front."
+                                    ))
+                                    .clicked()
+                                {
+                                    self.pick_deadline =
+                                        Some(Instant::now() + Duration::from_secs(PICK_SECONDS));
+                                }
+                            }
+                        }
+                        if !self.cfg.general.game_exe.is_empty() && ui.button("Clear").clicked() {
+                            self.cfg.general.game_exe.clear();
+                        }
+                    });
+                    ui.end_row();
+
+                    ui.label("Input method");
+                    let im = &mut self.cfg.general.input_method;
+                    egui::ComboBox::from_id_salt("input-method")
+                        .width(220.0)
+                        .selected_text(match im {
+                            InputMethod::Auto => "Driver if installed",
+                            InputMethod::Hooks => "Windows hooks only",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(im, InputMethod::Auto, "Driver if installed");
+                            ui.selectable_value(im, InputMethod::Hooks, "Windows hooks only");
+                        });
+                    theme::help(
+                        ui,
+                        "The driver hides captured input from the game completely.",
+                    );
+                    ui.end_row();
+
+                    ui.label("Interception driver");
+                    let (text, color) = match self.driver_status {
+                        Ok(()) => ("Installed and ready", theme::ACCENT),
+                        Err(DriverError::NotInstalled) => ("Not installed", theme::SELECT),
+                        Err(DriverError::DllMissing) => ("interception.dll missing", theme::SELECT),
+                        Err(DriverError::Unsupported) => ("Windows only", theme::TEXT_DIM),
+                    };
+                    ui.label(egui::RichText::new(text).color(color).strong());
+                    if ui
+                        .add_enabled(self.runtime.is_none(), egui::Button::new("Check again"))
+                        .clicked()
+                    {
+                        self.driver_status = padbridge::driver::status();
+                    }
+                    ui.end_row();
+                });
+            if let Err(e) = self.driver_status {
+                if e != DriverError::Unsupported {
+                    ui.add_space(4.0);
+                    theme::help(
+                        ui,
+                        "To install it: download Interception.zip from \
+                         github.com/oblitum/Interception/releases, open a Command Prompt as \
+                         administrator in its 'command line installer' folder, run \
+                         install-interception.exe /install, then restart the PC. Keep \
+                         interception.dll next to padbridge.exe (it is included in the download).",
+                    );
+                    theme::help(ui, &format!("Status detail: {e}."));
+                }
+            }
+        });
     }
 
     fn hotkey_card(&mut self, ui: &mut egui::Ui) {

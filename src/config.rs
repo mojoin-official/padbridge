@@ -328,6 +328,19 @@ pub enum Socd {
     Neutral,
 }
 
+/// How keyboard and mouse input is read.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum InputMethod {
+    /// The Interception driver when it is installed (games never see captured input), otherwise
+    /// low-level hooks.
+    Auto,
+    /// Always low-level hooks (games that read the mouse directly still see it).
+    Hooks,
+}
+
+/// Longest accepted program name for `game_exe`.
+pub const GAME_EXE_MAX: usize = 260;
+
 #[derive(Clone, Debug)]
 pub struct General {
     pub start_enabled: bool,
@@ -343,6 +356,10 @@ pub struct General {
     pub trigger_value: u8,
     pub wheel_pulse_ms: f64,
     pub beep_on_toggle: bool,
+    pub input_method: InputMethod,
+    /// When set, capture is on only while this program's window is in front (file name such as
+    /// `game.exe`, compared case-insensitively). Empty: always.
+    pub game_exe: String,
 }
 
 #[derive(Clone, Debug)]
@@ -535,6 +552,8 @@ fn parse_general(doc: &Document) -> Result<General, ConfigError> {
         "trigger_value",
         "wheel_pulse_ms",
         "beep_on_toggle",
+        "input_method",
+        "game_exe",
     ];
     let mut r = Reader::new(doc, "general");
     let toggle_line = r.section.and_then(|s| {
@@ -563,6 +582,23 @@ fn parse_general(doc: &Document) -> Result<General, ConfigError> {
         trigger_value: r.integer("trigger_value", 255, 1, 255)? as u8,
         wheel_pulse_ms: r.number("wheel_pulse_ms", 40.0, 5.0, 500.0)?,
         beep_on_toggle: r.boolean("beep_on_toggle", true)?,
+        input_method: match r.choice("input_method", &["auto", "hooks"], 0)? {
+            0 => InputMethod::Auto,
+            _ => InputMethod::Hooks,
+        },
+        game_exe: match r.string("game_exe")? {
+            None => String::new(),
+            Some((text, line)) => {
+                let t = text.trim().to_string();
+                if t.chars().count() > GAME_EXE_MAX || t.contains(['"', '\n']) {
+                    return err_at(
+                        line,
+                        "'game_exe' must be a program file name such as game.exe",
+                    );
+                }
+                t
+            }
+        },
     };
     r.finish(KEYS)?;
     if g.toggle_hotkey.overlaps(&g.exit_hotkey) {
@@ -833,6 +869,14 @@ impl Config {
         s.push_str(&format!("trigger_value = {}\n", g.trigger_value));
         s.push_str(&format!("wheel_pulse_ms = {}\n", g.wheel_pulse_ms));
         s.push_str(&format!("beep_on_toggle = {}\n", g.beep_on_toggle));
+        s.push_str(&format!(
+            "input_method = {}\n",
+            q(match g.input_method {
+                InputMethod::Auto => "auto",
+                InputMethod::Hooks => "hooks",
+            })
+        ));
+        s.push_str(&format!("game_exe = {}\n", q(&g.game_exe)));
 
         s.push_str("\n[mouse]\n");
         s.push_str(&format!("smoothing_ms = {}\n", m.smoothing_ms));
@@ -1089,11 +1133,15 @@ mod tests {
         )
         .unwrap();
         c.mouse.deadzone = 0.123456789;
+        c.general.input_method = InputMethod::Hooks;
+        c.general.game_exe = "My Game.exe".to_string();
         let b = Config::parse(&c.to_toml()).unwrap();
         assert_eq!(b.general.unbound, UnboundPolicy::Block);
         assert_eq!(b.general.socd, Socd::Neutral);
         assert_eq!(b.general.walk_scale, 0.35);
         assert_eq!(b.mouse.deadzone, 0.123456789, "floats survive exactly");
+        assert_eq!(b.general.input_method, InputMethod::Hooks);
+        assert_eq!(b.general.game_exe, "My Game.exe");
         assert_eq!(b.axes.len(), 1);
         assert_eq!(b.axes[0].target, AxisTarget::LeftX);
         assert!(b.axes[0].invert);

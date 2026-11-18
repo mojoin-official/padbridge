@@ -12,12 +12,28 @@ jobs:
           components: clippy
       # Build and publish the .exe files first, so nothing below can block the download.
       - run: cargo build --release --bins
+      # interception.dll (the user-mode library for the Interception driver) from the official
+      # release, placed next to the .exe files. The driver itself is installed by the user.
+      - name: fetch interception.dll
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download --repo oblitum/Interception --pattern "Interception.zip" --dir ic
+          Expand-Archive ic/Interception.zip -DestinationPath ic/x
+          $dll = Get-ChildItem ic/x -Recurse -Filter interception.dll |
+            Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+          if (-not $dll) { throw "x64 interception.dll not found in the release" }
+          Write-Host "using $($dll.FullName)"
+          Copy-Item $dll.FullName target/release/interception.dll
       - uses: actions/upload-artifact@v4
         with:
           name: padbridge-windows
           path: |
             target/release/padbridge.exe
             target/release/padbridge-cli.exe
+            target/release/interception.dll
             bindings.toml
             README.md
       - name: tests

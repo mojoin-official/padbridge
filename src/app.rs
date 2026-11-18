@@ -13,11 +13,13 @@
 //! * **log** - turns notices into text lines and beeps, so slow consumers never stall a hook.
 
 use crate::capture::{Action, Edge};
-use crate::config::Config;
+use crate::config::{Config, InputMethod};
+use crate::driver::Driver;
 use crate::engine::{describe, Engine};
-use crate::keys::{hook_key_id, MouseButton, Source};
+use crate::keys::{hook_key_id, MouseButton, Source, WheelDir, KEY_PAUSE};
 use crate::pad::Report;
 use crate::sink::{self, NullSink, PadSink, PrintSink};
+use crate::strokes::{KeyDecoder, KeyEvent, MouseStroke, StrokeBuf};
 use crate::sys::*;
 use std::mem::size_of;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -35,6 +37,24 @@ pub struct RunOptions {
     pub sniff: bool,
     /// In a dry run, print every report to stdout (console program).
     pub print_reports: bool,
+}
+
+/// How input is being read by a running instance.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Backend {
+    /// Interception driver: captured input never reaches any program.
+    Driver,
+    /// Low-level hooks: games that read the mouse directly can still see it.
+    Hooks,
+}
+
+impl Backend {
+    pub fn describe(self) -> &'static str {
+        match self {
+            Backend::Driver => "Interception driver",
+            Backend::Hooks => "Windows hooks",
+        }
+    }
 }
 
 enum Notice {
@@ -57,6 +77,10 @@ struct Shared {
     raw_packets: AtomicU64,
     /// Tells the output thread to finish.
     stop: AtomicBool,
+    /// Tells the input loop to finish (driver mode; hook mode also gets WM_QUIT).
+    quit: AtomicBool,
+    /// Capture only while this program is in front (empty: always).
+    game_exe: String,
     /// True from start until the mapping thread has fully cleaned up.
     running: AtomicBool,
     /// Most recent report, for live previews.
@@ -92,6 +116,7 @@ fn announce(sh: &Shared, action: Option<Action>) {
         }
         Some(Action::Exit) => {
             let _ = sh.notices.send(Notice::Exiting);
+            sh.quit.store(true, Ordering::Release);
             // Hook callbacks run on the mapping thread, so this ends its message loop.
             unsafe { PostQuitMessage(0) };
         }
@@ -268,6 +293,133 @@ unsafe extern "system" fn wnd_proc(
     }
     // Required for WM_INPUT as well: DefWindowProc performs the raw-input cleanup.
     DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Driver input (Interception)
+// ---------------------------------------------------------------------------------------------
+
+fn wheel_name(vertical: bool, positive: bool) -> WheelDir {
+    match (vertical, positive) {
+        (true, true) => WheelDir::Up,
+        (true, false) => WheelDir::Down,
+        (false, true) => WheelDir::Right,
+        (false, false) => WheelDir::Left,
+    }
+}
+
+/// Applies one mouse packet to the engine and removes everything that was captured. Returns
+/// whether anything is left to pass on to Windows.
+fn filter_mouse(sh: &Shared, m: &mut MouseStroke) -> bool {
+    use crate::strokes::*;
+    let was_empty = m.state == 0 && m.x == 0 && m.y == 0;
+    for (bit, button, edge) in MOUSE_BUTTON_BITS {
+        if m.state & bit != 0 && dispatch(sh, Source::Mouse(button), edge) {
+            m.state &= !bit;
+        }
+    }
+    for (bit, vertical) in [(MOUSE_WHEEL, true), (MOUSE_HWHEEL, false)] {
+        if m.state & bit == 0 {
+            continue;
+        }
+        let delta = i32::from(m.rolling);
+        let swallow = if sh.sniff {
+            let _ = sh.notices.send(Notice::Sniff(
+                Source::Wheel(wheel_name(vertical, delta > 0)).to_string(),
+            ));
+            false
+        } else {
+            lock(&sh.engine).on_wheel(vertical, delta)
+        };
+        if swallow {
+            m.state &= !bit;
+        }
+    }
+    if m.state & (MOUSE_WHEEL | MOUSE_HWHEEL) == 0 {
+        m.rolling = 0;
+    }
+    if m.flags & MOUSE_MOVE_ABSOLUTE == 0 && (m.x != 0 || m.y != 0) && !sh.sniff {
+        sh.raw_packets.fetch_add(1, Ordering::Relaxed);
+        sh.dx.fetch_add(i64::from(m.x), Ordering::AcqRel);
+        sh.dy.fetch_add(i64::from(m.y), Ordering::AcqRel);
+        if lock(&sh.engine).swallow_motion() {
+            m.x = 0;
+            m.y = 0;
+        }
+    }
+    was_empty || m.state != 0 || m.x != 0 || m.y != 0
+}
+
+/// Reads every keyboard and mouse event from the driver until told to stop, passing on only
+/// what is not captured.
+fn driver_loop(sh: &Shared, drv: &Driver) {
+    let mut keys = KeyDecoder::default();
+    let mut pause_swallowed = false;
+    let mut buf = StrokeBuf::default();
+    while !sh.quit.load(Ordering::Acquire) {
+        let device = drv.wait(50);
+        if device <= 0 || !drv.receive(device, &mut buf) {
+            continue;
+        }
+        let forward = if drv.is_keyboard(device) {
+            match keys.decode(&buf.key()) {
+                KeyEvent::Ignore => true,
+                KeyEvent::PauseTail(_) => !pause_swallowed,
+                KeyEvent::Key(id, edge) => {
+                    let swallow = dispatch(sh, Source::Key(id), edge);
+                    if id == KEY_PAUSE {
+                        pause_swallowed = swallow;
+                    }
+                    !swallow
+                }
+            }
+        } else if drv.is_mouse(device) {
+            let mut m = buf.mouse();
+            let keep = filter_mouse(sh, &mut m);
+            buf.set_mouse(&m);
+            keep
+        } else {
+            true
+        };
+        if forward {
+            drv.send(device, &buf);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Foreground program
+// ---------------------------------------------------------------------------------------------
+
+/// File name of the program whose window is in front (e.g. `game.exe`), if it can be read.
+pub fn foreground_program() -> Option<String> {
+    if !cfg!(windows) {
+        return None;
+    }
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() {
+            return None;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid == 0 {
+            return None;
+        }
+        let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if h.is_null() {
+            return None;
+        }
+        let mut buf = [0u16; 1024];
+        let mut len = buf.len() as u32;
+        let ok = QueryFullProcessImageNameW(h, 0, buf.as_mut_ptr(), &mut len);
+        CloseHandle(h);
+        if ok == 0 {
+            return None;
+        }
+        let path = String::from_utf16_lossy(&buf[..len as usize]);
+        Some(crate::util::file_name(&path).to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -480,6 +632,8 @@ fn output_thread(
     let mut last_warn: Option<Instant> = None;
     let mut raw_check_due = Instant::now() + Duration::from_secs(2);
     let mut raw_warned = false;
+    let mut focus_due = Instant::now();
+    let mut focus_last: Option<bool> = None;
 
     while !shared.stop.load(Ordering::Acquire) {
         ticker.sleep_until(next);
@@ -497,6 +651,32 @@ fn output_thread(
                      on the Mouse to stick page and report this."
                         .to_string(),
                 ));
+            }
+        }
+        if !shared.game_exe.is_empty() && now >= focus_due {
+            focus_due = now + Duration::from_millis(200);
+            let in_game = foreground_program()
+                .is_some_and(|exe| crate::util::exe_matches(&exe, &shared.game_exe));
+            if focus_last != Some(in_game) {
+                focus_last = Some(in_game);
+                let changed = {
+                    let mut engine = lock(&shared.engine);
+                    let changed = engine.enabled() != in_game;
+                    if changed {
+                        engine.set_enabled(in_game);
+                    }
+                    changed
+                };
+                if changed {
+                    let _ = shared.notices.send(Notice::Info(
+                        if in_game {
+                            "game in front: capturing"
+                        } else {
+                            "game not in front: keyboard and mouse released"
+                        }
+                        .to_string(),
+                    ));
+                }
             }
         }
         let elapsed = now.duration_since(last_tick).as_secs_f64();
@@ -609,7 +789,8 @@ fn run_mapping(
     shared: &Arc<Shared>,
     opts: RunOptions,
     hz: u32,
-    ready: &mut Option<mpsc::Sender<Result<u32, String>>>,
+    method: InputMethod,
+    ready: &mut Option<mpsc::Sender<Result<(u32, Backend), String>>>,
 ) -> Result<(), String> {
     let _instance = SingleInstance::acquire()?;
     let _active = ActiveGuard::publish(shared)?;
@@ -636,6 +817,21 @@ fn run_mapping(
     }
 
     unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST) };
+
+    // Preferred: the driver, so captured input never reaches any program.
+    let driver = match method {
+        InputMethod::Auto => Driver::open().ok(),
+        InputMethod::Hooks => None,
+    };
+    if let Some(drv) = driver {
+        drv.capture_all();
+        if let Some(r) = ready.take() {
+            let _ = r.send(Ok((unsafe { GetCurrentThreadId() }, Backend::Driver)));
+        }
+        driver_loop(shared, &drv);
+        return Ok(()); // dropping `drv` ends interception
+    }
+
     let hwnd = unsafe { create_window() }?;
     let _window = WindowGuard(hwnd);
 
@@ -658,7 +854,7 @@ fn run_mapping(
     let _ms = HookGuard(ms);
 
     if let Some(r) = ready.take() {
-        let _ = r.send(Ok(unsafe { GetCurrentThreadId() }));
+        let _ = r.send(Ok((unsafe { GetCurrentThreadId() }, Backend::Hooks)));
     }
 
     let mut msg = MSG::zeroed();
@@ -687,6 +883,7 @@ pub struct Runtime {
     shared: Arc<Shared>,
     thread: Option<JoinHandle<()>>,
     thread_id: u32,
+    backend: Backend,
     logger: Option<JoinHandle<()>>,
     log_rx: mpsc::Receiver<String>,
 }
@@ -714,6 +911,8 @@ impl Runtime {
             moves_swallowed: AtomicU64::new(0),
             raw_packets: AtomicU64::new(0),
             stop: AtomicBool::new(false),
+            quit: AtomicBool::new(false),
+            game_exe: cfg.general.game_exe.trim().to_string(),
             running: AtomicBool::new(true),
             last_report: Mutex::new(Report::default()),
             ignore_injected: cfg.general.ignore_injected,
@@ -726,15 +925,16 @@ impl Runtime {
             let _ = logger.join();
         };
 
-        let (ready_tx, ready_rx) = mpsc::channel::<Result<u32, String>>();
+        let (ready_tx, ready_rx) = mpsc::channel::<Result<(u32, Backend), String>>();
         let th_shared = Arc::clone(&shared);
         let hz = cfg.general.output_hz;
+        let method = cfg.general.input_method;
         CLEANED_UP.store(false, Ordering::Release);
         let thread = match thread::Builder::new()
             .name("padbridge-mapping".into())
             .spawn(move || {
                 let mut ready = Some(ready_tx);
-                let result = run_mapping(&th_shared, opts, hz, &mut ready);
+                let result = run_mapping(&th_shared, opts, hz, method, &mut ready);
                 match (result, ready.take()) {
                     (Err(e), Some(r)) => {
                         let _ = r.send(Err(e));
@@ -756,11 +956,12 @@ impl Runtime {
         };
 
         let failure = match ready_rx.recv_timeout(Duration::from_secs(20)) {
-            Ok(Ok(tid)) => {
+            Ok(Ok((tid, backend))) => {
                 let rt = Runtime {
                     shared,
                     thread: Some(thread),
                     thread_id: tid,
+                    backend,
                     logger: Some(logger),
                     log_rx,
                 };
@@ -768,13 +969,20 @@ impl Runtime {
                     "sniff mode: press keys and mouse buttons to see their names".to_string()
                 } else {
                     format!(
-                        "running{}. mapping is {}. toggle: {}   exit: {}",
+                        "running{} using the {}. mapping is {}. toggle: {}   exit: {}",
                         if opts.dry_run {
                             " (test mode, no controller)"
                         } else {
                             ""
                         },
-                        if rt.enabled() { "ON" } else { "off" },
+                        backend.describe(),
+                        if !cfg.general.game_exe.trim().is_empty() {
+                            "on while the game is in front"
+                        } else if rt.enabled() {
+                            "ON"
+                        } else {
+                            "off"
+                        },
                         cfg.general.toggle_hotkey,
                         cfg.general.exit_hotkey
                     )
@@ -820,9 +1028,15 @@ impl Runtime {
         self.thread_id
     }
 
+    /// How input is being read.
+    pub fn backend(&self) -> Backend {
+        self.backend
+    }
+
     /// Stops mapping, releases every key and unplugs the controller. Idempotent.
     pub fn stop(&mut self) {
         if let Some(t) = self.thread.take() {
+            self.shared.quit.store(true, Ordering::Release);
             if self.thread_id != 0 {
                 unsafe { PostThreadMessageW(self.thread_id, WM_QUIT, 0, 0) };
             }
@@ -849,6 +1063,9 @@ unsafe extern "system" fn ctrl_handler(event: u32) -> BOOL {
     match event {
         CTRL_C_EVENT | CTRL_BREAK_EVENT | CTRL_CLOSE_EVENT | CTRL_LOGOFF_EVENT
         | CTRL_SHUTDOWN_EVENT => {
+            if let Some(sh) = active() {
+                sh.quit.store(true, Ordering::Release);
+            }
             let tid = CTRL_THREAD_ID.load(Ordering::Acquire);
             if tid != 0 {
                 PostThreadMessageW(tid, WM_QUIT, 0, 0);

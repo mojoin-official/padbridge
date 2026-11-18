@@ -8,14 +8,16 @@ mod theme;
 mod views;
 
 use eframe::egui;
+use padbridge::app::Backend;
 use padbridge::app::{RunOptions, Runtime};
 use padbridge::bindings::Combo;
 use padbridge::config::Config;
+use padbridge::driver::DriverError;
 use padbridge::keys::Source;
 use padbridge::pad::Output;
 use padbridge::profiles::ProfileStore;
 use std::collections::VecDeque;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Tab {
@@ -89,6 +91,10 @@ pub struct PadApp {
     new_name: String,
     /// Calibration helper inputs per mouse axis: counts per 360, seconds per 360.
     pub calib: [[f64; 2]; 2],
+    /// Whether the Interception driver can be used (checked at start and on request).
+    pub driver_status: Result<(), DriverError>,
+    /// "Pick the game window" countdown.
+    pub pick_deadline: Option<Instant>,
 }
 
 impl PadApp {
@@ -114,6 +120,8 @@ impl PadApp {
             dialog: Dialog::None,
             new_name: String::new(),
             calib: [[16000.0, 2.0], [16000.0, 2.0]],
+            driver_status: padbridge::driver::status(),
+            pick_deadline: None,
         };
         match ProfileStore::open(ProfileStore::default_dir()) {
             Ok(store) => {
@@ -408,6 +416,7 @@ impl PadApp {
             }
             let (on, text) = match &self.runtime {
                 Some(rt) if rt.enabled() => (true, "Capturing"),
+                _ if !self.cfg.general.game_exe.trim().is_empty() => (false, "Waiting for game"),
                 _ => (false, "Paused"),
             };
             status_chip(ui, on, text);
@@ -467,13 +476,30 @@ impl PadApp {
                 if let Some(rt) = &self.runtime {
                     let hotkey = self.cfg.general.toggle_hotkey.to_string();
                     let exit = self.cfg.general.exit_hotkey.to_string();
-                    let (fill, text) = if rt.enabled() {
+                    let game = self.cfg.general.game_exe.trim().to_string();
+                    let (fill, mut text) = if rt.enabled() {
                         (
                             theme::OK_DIM,
+                            if game.is_empty() {
+                                format!(
+                                    "Capturing: bound keys and the mouse go to the controller, so \
+                                     you may not be able to click here. Press {hotkey} to pause \
+                                     and get them back, {exit} to stop."
+                                )
+                            } else {
+                                format!(
+                                    "Capturing while {game} is in front. Switch away from the \
+                                     game (Alt+Tab) to use your keyboard and mouse normally; \
+                                     {hotkey} pauses, {exit} stops."
+                                )
+                            },
+                        )
+                    } else if !game.is_empty() {
+                        (
+                            theme::CARD,
                             format!(
-                                "Capturing: bound keys and the mouse go to the controller, so you \
-                                 may not be able to click here. Press {hotkey} to pause and get \
-                                 them back, {exit} to stop."
+                                "Waiting: capture turns on automatically when {game} is in front. \
+                                 Until then your keyboard and mouse work normally."
                             ),
                         )
                     } else {
@@ -485,6 +511,8 @@ impl PadApp {
                             ),
                         )
                     };
+                    let hooks_warning = rt.backend() == Backend::Hooks;
+                    text.push_str(&format!("   Input: {}.", rt.backend().describe()));
                     ui.add_space(6.0);
                     egui::Frame::default()
                         .fill(fill)
@@ -493,6 +521,16 @@ impl PadApp {
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.label(egui::RichText::new(text).color(theme::TEXT));
+                            if hooks_warning {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "The game can still see your real mouse and keyboard, so \
+                                         it may keep switching to keyboard prompts. Install the \
+                                         Interception driver (Settings) to stop that.",
+                                    )
+                                    .color(theme::SELECT),
+                                );
+                            }
                         });
                 }
             });
@@ -708,6 +746,7 @@ fn status_chip(ui: &mut egui::Ui, on: bool, text: &str) {
 impl eframe::App for PadApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_runtime();
+        self.poll_pick(ctx);
         if self.running() {
             // Live preview and log.
             ctx.request_repaint_after(Duration::from_millis(30));
