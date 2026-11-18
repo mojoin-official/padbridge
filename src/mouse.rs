@@ -84,18 +84,6 @@ impl StickStage {
         self.pending.0 += dx;
         self.pending.1 += dy;
 
-        // Bound the backlog; anything beyond it is intentionally discarded.
-        let plen = self.backlog();
-        if plen > self.backlog_cap {
-            let k = if plen > 0.0 {
-                self.backlog_cap / plen
-            } else {
-                0.0
-            };
-            self.pending.0 *= k;
-            self.pending.1 *= k;
-        }
-
         // Sum of the entries that stay in the window once the oldest slot is reused.
         let (mut bx, mut by) = (0.0, 0.0);
         for (i, e) in self.ring.iter().enumerate() {
@@ -126,6 +114,20 @@ impl StickStage {
         }
         self.ring[self.idx] = commit;
         self.idx = (self.idx + 1) % self.ring.len();
+
+        // Bound what is left over for later ticks; anything beyond it is intentionally
+        // discarded. This happens only *after* this tick's share was committed, so a limit of 0
+        // means "no catch-up" (motion faster than full stick is cut), never "no motion".
+        let plen = self.backlog();
+        if plen > self.backlog_cap {
+            let k = if plen > 0.0 {
+                self.backlog_cap / plen
+            } else {
+                0.0
+            };
+            self.pending.0 *= k;
+            self.pending.1 *= k;
+        }
 
         ((bx + commit.0) / self.window, (by + commit.1) / self.window)
     }
@@ -274,6 +276,38 @@ mod tests {
         // only about cap + one window can come out
         assert!(area < 0.02 + 0.010 + 1e-9, "area {area}");
         assert!(area > 0.015, "area {area}");
+    }
+
+    #[test]
+    fn zero_catch_up_still_passes_all_normal_motion() {
+        // Regression: a catch-up limit of 0 (the Snappy preset) used to discard every movement.
+        let mut s = StickStage::new(6, DT, 0.0, 0.0, 1.0);
+        let mut sent = 0.0;
+        let mut got = 0.0;
+        for _ in 0..500 {
+            let d = 0.0004; // 40 % of full stick, well within what the stick can express
+            sent += d;
+            got += s.push(d, 0.0).0 * DT;
+        }
+        for _ in 0..20 {
+            got += s.push(0.0, 0.0).0 * DT;
+        }
+        assert!((got - sent).abs() < 1e-12, "{got} vs {sent}");
+        assert_eq!(s.backlog(), 0.0);
+    }
+
+    #[test]
+    fn zero_catch_up_cuts_only_the_excess_and_stops_at_once() {
+        let mut s = StickStage::new(10, DT, 0.0, 0.0, 1.0);
+        let first = s.push(1.0, 0.0); // absurd flick
+        assert!(first.0 > 0.999, "the stick still goes to full: {first:?}");
+        assert_eq!(s.backlog(), 0.0, "nothing is queued for later");
+        let mut moving = 0;
+        while s.push(0.0, 0.0).0 > 0.0 {
+            moving += 1;
+            assert!(moving < 20);
+        }
+        assert!(moving <= 10, "returns to centre within one window");
     }
 
     #[test]
