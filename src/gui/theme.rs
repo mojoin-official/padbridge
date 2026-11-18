@@ -183,8 +183,10 @@ static CLEAR: Palette = Palette {
     text: Color32::from_rgb(246, 248, 255),
     text_dim: Color32::from_rgb(200, 206, 226),
     accent: Color32::from_rgb(170, 225, 255),
-    accent_dim: rgba(170, 225, 255, 70),
-    accent_hi: rgba(170, 225, 255, 120),
+    // Mapped keys: a smoky blue rather than a pale tint, so white labels stay readable even
+    // over a bright desktop at 0 % background opacity.
+    accent_dim: rgba(36, 84, 124, 190),
+    accent_hi: rgba(54, 112, 160, 215),
     on_accent: Color32::from_rgb(14, 20, 36),
     select: Color32::from_rgb(255, 210, 130),
     danger: Color32::from_rgb(255, 140, 155),
