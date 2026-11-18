@@ -43,9 +43,9 @@ impl PadApp {
                 .show(ui, |ui| {
                     for (i, label) in [(0usize, "Pause / resume capture"), (1, "Stop mapping")] {
                         ui.label(label);
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.hotkey_text[i])
-                                .desired_width(200.0),
+                        ui.add_sized(
+                            [220.0, 26.0],
+                            egui::TextEdit::singleline(&mut self.hotkey_text[i]),
                         );
                         match &self.hotkey_err[i] {
                             Some(e) => {

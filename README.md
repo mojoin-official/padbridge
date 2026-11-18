@@ -20,26 +20,40 @@ engine --(500 Hz reports)--> ViGEmBus virtual Xbox 360 pad --> XInput / GameInpu
 * Run padbridge **as administrator** if the game runs elevated, otherwise Windows hides that
   window's input from hooks (UIPI).
 
-## Build and run
+## The app (padbridge.exe)
 
-```
-cargo build --release
-target\release\padbridge.exe --write-default      # writes bindings.toml next to you
-```
+Double-click `padbridge.exe`. Pages:
 
-First-run checklist, in this order:
+* **Keyboard / Mouse buttons**: click a key or button, then click the controller outputs it
+  should drive on the right. Mapped keys are green and show what they do.
+* **Controller**: click a controller button to see which keys drive it, remove them, or add one.
+* **Mouse to stick**: which stick axis each mouse direction drives, sensitivity, inversion,
+  calibration, and the motion-feel settings, with a response graph and a live stick preview.
+* **Settings**: hotkeys, unmapped-key behaviour, opposite-direction handling, ramps and more.
 
-1. `padbridge --check` validates `bindings.toml` and prints what it does. Typos are errors with
-   a "did you mean" hint; nothing is silently ignored.
-2. `padbridge --sniff` prints the name of every key or button you press, to use in the config.
-3. `padbridge --dry-run` runs the whole pipeline but prints reports instead of creating a
-   controller. **Move the mouse while mapping is on and confirm `R=(...)` values change.** This
-   also proves Raw Input works on your machine (see "Not verified" below).
-4. `padbridge` for real. Check it in `joy.cpl` or any gamepad tester, then in the game.
+Profiles (one per game, say) are saved in a `profiles` folder next to the .exe. **Start** begins
+mapping; **Test mode** runs everything except the virtual controller, so you can watch the live
+preview without the driver. Edits made while running take effect with **Apply changes**.
 
 Hotkeys (configurable, never reach the game, work even when everything is captured):
-**Ctrl+Alt+F10** toggles mapping, **Ctrl+Alt+F12** exits. Ctrl+C in the console also exits.
-Toggling or exiting releases everything and unplugs the pad.
+**Ctrl+Alt+F10** pauses/resumes capture, **Ctrl+Alt+F12** stops mapping. While capturing, your
+mouse drives the stick, so use the hotkey to get the cursor back. Closing the window always
+releases everything and unplugs the pad.
+
+## Console version (padbridge-cli.exe)
+
+Same engine, no window, configured by a `bindings.toml` file:
+
+1. `padbridge-cli --write-default` writes `bindings.toml`; `--check` validates it.
+2. `padbridge-cli --sniff` prints the name of every key or button you press.
+3. `padbridge-cli --dry-run` prints reports instead of creating a controller.
+4. `padbridge-cli` for real. Ctrl+C also exits.
+
+## Building
+
+`cargo build --release` produces both programs in `target\release`. Every push to GitHub also
+builds them (Actions tab, artifact `padbridge-windows`) and photographs each page of the app to
+the `screenshots` branch.
 
 ## Same movement: how mouse becomes stick
 

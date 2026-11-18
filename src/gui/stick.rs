@@ -294,7 +294,7 @@ impl PadApp {
             );
         }
         // grid
-        let grid = Stroke::new(1.0, Color32::from_rgb(40, 45, 56));
+        let grid = Stroke::new(1.0_f32, Color32::from_rgb(40, 45, 56));
         for i in 0..=4 {
             let y = i as f64 / 4.0;
             p.line_segment([to_screen(0.0, y), to_screen(x_max, y)], grid);
@@ -344,7 +344,10 @@ impl PadApp {
             .iter()
             .map(|&(x, y)| to_screen(x, y))
             .collect();
-        p.add(egui::Shape::line(game, Stroke::new(2.0, theme::TEXT_DIM)));
+        p.add(egui::Shape::line(
+            game,
+            Stroke::new(2.0_f32, theme::TEXT_DIM),
+        ));
         // stick value padbridge sends
         let mut sent = vec![to_screen(0.0, 0.0)];
         for i in 1..=250 {
@@ -352,7 +355,7 @@ impl PadApp {
             let raw = stage.respond((x.min(1.0), 0.0)).0;
             sent.push(to_screen(x, raw));
         }
-        p.add(egui::Shape::line(sent, Stroke::new(2.5, theme::ACCENT)));
+        p.add(egui::Shape::line(sent, Stroke::new(2.5_f32, theme::ACCENT)));
     }
 
     fn live_preview(&self, ui: &mut egui::Ui) {
@@ -390,21 +393,21 @@ impl PadApp {
                 rect.top() + radius + 8.0,
             );
             p.circle_filled(c, radius, theme::CARD);
-            p.circle_stroke(c, radius, Stroke::new(1.5, theme::LINE));
+            p.circle_stroke(c, radius, Stroke::new(1.5_f32, theme::LINE));
             if mouse_driven && self.cfg.mouse.deadzone > 0.0 {
                 p.circle_stroke(
                     c,
                     radius * self.cfg.mouse.deadzone as f32,
-                    Stroke::new(1.0, theme::DANGER),
+                    Stroke::new(1.0_f32, theme::DANGER),
                 );
             }
             p.line_segment(
                 [c - egui::vec2(radius, 0.0), c + egui::vec2(radius, 0.0)],
-                Stroke::new(1.0, theme::LINE),
+                Stroke::new(1.0_f32, theme::LINE),
             );
             p.line_segment(
                 [c - egui::vec2(0.0, radius), c + egui::vec2(0.0, radius)],
-                Stroke::new(1.0, theme::LINE),
+                Stroke::new(1.0_f32, theme::LINE),
             );
             let fx = f32::from(x) / 32767.0;
             let fy = f32::from(y) / 32767.0;
@@ -414,7 +417,7 @@ impl PadApp {
             } else {
                 theme::TEXT_DIM
             };
-            p.line_segment([c, dot], Stroke::new(2.0, color.gamma_multiply(0.5)));
+            p.line_segment([c, dot], Stroke::new(2.0_f32, color.gamma_multiply(0.5)));
             p.circle_filled(dot, 7.0, color);
             p.text(
                 Pos2::new(c.x, c.y + radius + 8.0),
@@ -452,10 +455,10 @@ fn buttons_line(ui: &mut egui::Ui, r: &Report) {
         (BTN_GUIDE, "Guide"),
         (BTN_LEFT_THUMB, "L3"),
         (BTN_RIGHT_THUMB, "R3"),
-        (BTN_DPAD_UP, "D\u{2191}"),
-        (BTN_DPAD_DOWN, "D\u{2193}"),
-        (BTN_DPAD_LEFT, "D\u{2190}"),
-        (BTN_DPAD_RIGHT, "D\u{2192}"),
+        (BTN_DPAD_UP, "D Up"),
+        (BTN_DPAD_DOWN, "D Dn"),
+        (BTN_DPAD_LEFT, "D Lt"),
+        (BTN_DPAD_RIGHT, "D Rt"),
     ];
     ui.horizontal_wrapped(|ui| {
         ui.label(egui::RichText::new("Buttons:").color(theme::TEXT_DIM));

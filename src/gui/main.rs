@@ -411,11 +411,9 @@ impl PadApp {
                 _ => (false, "Paused"),
             };
             status_chip(ui, on, text);
-            if !on {
-                if ui.button("Resume capture").clicked() {
-                    if let Some(rt) = &self.runtime {
-                        rt.set_enabled(true);
-                    }
+            if !on && ui.button("Resume capture").clicked() {
+                if let Some(rt) = &self.runtime {
+                    rt.set_enabled(true);
                 }
             }
         } else {

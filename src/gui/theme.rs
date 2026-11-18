@@ -29,28 +29,28 @@ pub fn apply(ctx: &egui::Context) {
     v.override_text_color = Some(TEXT);
     v.hyperlink_color = ACCENT;
     v.selection.bg_fill = ACCENT_HI;
-    v.selection.stroke = Stroke::new(1.0, ACCENT);
-    v.window_stroke = Stroke::new(1.0, LINE);
+    v.selection.stroke = Stroke::new(1.0_f32, ACCENT);
+    v.window_stroke = Stroke::new(1.0_f32, LINE);
 
     v.widgets.noninteractive.bg_fill = CARD;
     v.widgets.noninteractive.weak_bg_fill = CARD;
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, LINE);
-    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, TEXT);
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, LINE);
+    v.widgets.noninteractive.fg_stroke = Stroke::new(1.0_f32, TEXT);
 
     v.widgets.inactive.bg_fill = CARD_HI;
     v.widgets.inactive.weak_bg_fill = CARD_HI;
     v.widgets.inactive.bg_stroke = Stroke::NONE;
-    v.widgets.inactive.fg_stroke = Stroke::new(1.0, TEXT);
+    v.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, TEXT);
 
     v.widgets.hovered.bg_fill = Color32::from_rgb(56, 63, 78);
     v.widgets.hovered.weak_bg_fill = Color32::from_rgb(56, 63, 78);
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, ACCENT);
-    v.widgets.hovered.fg_stroke = Stroke::new(1.5, TEXT);
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, ACCENT);
+    v.widgets.hovered.fg_stroke = Stroke::new(1.5_f32, TEXT);
 
     v.widgets.active.bg_fill = ACCENT_HI;
     v.widgets.active.weak_bg_fill = ACCENT_HI;
-    v.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
-    v.widgets.active.fg_stroke = Stroke::new(1.5, TEXT);
+    v.widgets.active.bg_stroke = Stroke::new(1.0_f32, ACCENT);
+    v.widgets.active.fg_stroke = Stroke::new(1.5_f32, TEXT);
 
     v.widgets.open.bg_fill = CARD_HI;
     v.widgets.open.weak_bg_fill = CARD_HI;
@@ -80,7 +80,7 @@ pub fn apply(ctx: &egui::Context) {
 pub fn card() -> egui::Frame {
     egui::Frame::default()
         .fill(CARD)
-        .stroke(Stroke::new(1.0, LINE))
+        .stroke(Stroke::new(1.0_f32, LINE))
         .rounding(8.0)
         .inner_margin(egui::Margin::symmetric(14.0, 12.0))
 }

@@ -62,31 +62,28 @@ fn slot_canvas(
         let lk = look(s, hovered == Some(i));
         let rounding = (unit * 0.14).clamp(3.0, 8.0);
         painter.rect(*r, rounding, lk.fill, lk.stroke);
+        let max_w = r.width() - 6.0;
         match &lk.sub {
             Some(sub) => {
-                painter.text(
+                fit_text(
+                    &painter,
                     Pos2::new(r.center().x, r.top() + r.height() * 0.34),
-                    Align2::CENTER_CENTER,
                     s.label,
-                    FontId::proportional(label_size),
+                    label_size,
+                    max_w,
                     lk.text,
                 );
-                painter.text(
+                fit_text(
+                    &painter,
                     Pos2::new(r.center().x, r.bottom() - r.height() * 0.24),
-                    Align2::CENTER_CENTER,
                     sub,
-                    FontId::proportional(sub_size),
+                    sub_size,
+                    max_w,
                     theme::ACCENT,
                 );
             }
             None => {
-                painter.text(
-                    r.center(),
-                    Align2::CENTER_CENTER,
-                    s.label,
-                    FontId::proportional(label_size),
-                    lk.text,
-                );
+                fit_text(&painter, r.center(), s.label, label_size, max_w, lk.text);
             }
         }
     }
@@ -94,6 +91,25 @@ fn slot_canvas(
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
     (clicked, hovered, resp)
+}
+
+/// Draws `text` centred on `center`, shrinking the font so it fits within `max_w`.
+fn fit_text(
+    painter: &egui::Painter,
+    center: Pos2,
+    text: &str,
+    size: f32,
+    max_w: f32,
+    color: Color32,
+) {
+    let mut galley = painter.layout_no_wrap(text.to_string(), FontId::proportional(size), color);
+    let w = galley.size().x;
+    if w > max_w && max_w > 0.0 {
+        let smaller = (size * max_w / w).max(7.0);
+        galley = painter.layout_no_wrap(text.to_string(), FontId::proportional(smaller), color);
+    }
+    let pos = center - galley.size() / 2.0;
+    painter.galley(pos, galley, color);
 }
 
 /// Short summary of a source's outputs that fits under a key.
@@ -123,7 +139,12 @@ fn draw_mouse_body(p: &egui::Painter, r: Rect, unit: f32) {
         Pos2::new(r.left() + 0.6 * unit, r.top()),
         Pos2::new(r.right() - 0.6 * unit, r.bottom() - 0.2 * unit),
     );
-    p.rect(body, 4.2 * unit, theme::BODY, Stroke::new(2.0, theme::LINE));
+    p.rect(
+        body,
+        4.2 * unit,
+        theme::BODY,
+        Stroke::new(2.0_f32, theme::LINE),
+    );
     // palm shading
     let palm = Rect::from_min_max(
         Pos2::new(body.left() + 1.4 * unit, r.top() + 7.6 * unit),
@@ -133,7 +154,7 @@ fn draw_mouse_body(p: &egui::Painter, r: Rect, unit: f32) {
     p.text(
         Pos2::new(r.center().x, r.top() + 11.6 * unit),
         Align2::CENTER_CENTER,
-        "Movement \u{2192} 'Mouse to stick'",
+        "Movement: see 'Mouse to stick'",
         FontId::proportional((unit * 0.32).clamp(10.0, 15.0)),
         theme::TEXT_DIM,
     );
@@ -253,11 +274,11 @@ impl PadApp {
                             (false, false) => theme::CARD,
                         };
                         let stroke = if selected == Some(src) {
-                            Stroke::new(2.5, theme::SELECT)
+                            Stroke::new(2.5_f32, theme::SELECT)
                         } else if bound {
-                            Stroke::new(1.0, theme::ACCENT_HI)
+                            Stroke::new(1.0_f32, theme::ACCENT_HI)
                         } else {
-                            Stroke::new(1.0, theme::LINE)
+                            Stroke::new(1.0_f32, theme::LINE)
                         };
                         SlotLook {
                             fill,
@@ -274,7 +295,7 @@ impl PadApp {
                         format!("{src}: not mapped")
                     } else {
                         let names: Vec<&str> = outs.iter().map(|o| o.name()).collect();
-                        format!("{src} \u{2192} {}", names.join(", "))
+                        format!("{src} drives {}", names.join(", "))
                     };
                     resp.on_hover_text_at_pointer(text);
                 }
@@ -314,7 +335,7 @@ impl PadApp {
                 let what = match self.cfg.general.unbound {
                     UnboundPolicy::Pass => "Nothing. It keeps working as a normal key in Windows.",
                     UnboundPolicy::Block => {
-                        "Nothing. It is blocked while capturing (Settings \u{2192} unmapped keys)."
+                        "Nothing. It is blocked while capturing (see Settings, unmapped keys)."
                     }
                 };
                 theme::help(ui, what);
@@ -358,7 +379,7 @@ impl PadApp {
                     let resp = if o == Output::Walk {
                         resp.on_hover_text(
                             "Not a controller button: while held, keyboard-driven left-stick \
-                             movement is scaled down (Settings \u{2192} walk scale).",
+                             movement is scaled down (Settings, walk scale).",
                         )
                     } else {
                         resp
@@ -428,9 +449,9 @@ impl PadApp {
                             (false, false) => theme::CARD,
                         };
                         let stroke = if selected == Some(out) {
-                            Stroke::new(2.5, theme::SELECT)
+                            Stroke::new(2.5_f32, theme::SELECT)
                         } else {
-                            Stroke::new(1.0, theme::LINE)
+                            Stroke::new(1.0_f32, theme::LINE)
                         };
                         let sub = match srcs.as_slice() {
                             [] => None,
@@ -452,7 +473,7 @@ impl PadApp {
                         format!("{}: no input", out.name())
                     } else {
                         let names: Vec<String> = srcs.iter().map(|s| s.to_string()).collect();
-                        format!("{} \u{2190} {}", out.name(), names.join(", "))
+                        format!("{} is driven by {}", out.name(), names.join(", "))
                     };
                     resp.on_hover_text_at_pointer(text);
                 }
@@ -553,5 +574,6 @@ fn legend(ui: &mut egui::Ui) {
 
 fn swatch(ui: &mut egui::Ui, fill: Color32, stroke: Color32) {
     let (r, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-    ui.painter().rect(r, 3.0, fill, Stroke::new(1.5, stroke));
+    ui.painter()
+        .rect(r, 3.0, fill, Stroke::new(1.5_f32, stroke));
 }
