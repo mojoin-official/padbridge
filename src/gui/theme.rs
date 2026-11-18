@@ -371,8 +371,15 @@ pub fn help(ui: &mut egui::Ui, text: &str) {
 }
 
 /// A rectangle painted as glass (used for keys and buttons on the pictures).
-pub fn glass_rect(painter: &egui::Painter, r: Rect, rounding: f32, fill: Color32, stroke: Stroke) {
+pub fn glass_rect(
+    painter: &egui::Painter,
+    r: Rect,
+    rounding: egui::Rounding,
+    fill: Color32,
+    stroke: Stroke,
+) {
     painter.rect(r, rounding, fill, stroke);
+    let rounding = rounding.nw.max(rounding.ne);
     // a faint highlight along the top edge sells the glass
     let hl = if p().dark { white(28) } else { white(200) };
     let top = Rect::from_min_max(

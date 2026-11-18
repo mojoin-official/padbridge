@@ -60,7 +60,23 @@ fn slot_canvas(
     let sub_size = (unit * 0.22).clamp(8.0, 13.0);
     for (i, (s, r)) in slots.iter().zip(&rects).enumerate() {
         let lk = look(s, hovered == Some(i));
-        let rounding = (unit * 0.18).clamp(4.0, 12.0);
+        let base = (unit * 0.18).clamp(4.0, 12.0);
+        // The two main mouse buttons follow the curve of the mouse body.
+        let rounding = match s.name {
+            "MouseLeft" => egui::Rounding {
+                nw: 3.8 * unit,
+                ne: base,
+                sw: base,
+                se: base,
+            },
+            "MouseRight" => egui::Rounding {
+                nw: base,
+                ne: 3.8 * unit,
+                sw: base,
+                se: base,
+            },
+            _ => egui::Rounding::same(base),
+        };
         theme::glass_rect(&painter, *r, rounding, lk.fill, lk.stroke);
         let max_w = r.width() - 6.0;
         match &lk.sub {
@@ -175,19 +191,30 @@ fn draw_pad_body(p: &egui::Painter, r: Rect, unit: f32) {
         in_rrect || in_circle(4.4, 7.6, 4.1) || in_circle(15.6, 7.6, 4.1)
     };
     let (cx, cy) = (10.0, 6.0);
-    let mut outline = Vec::with_capacity(180);
-    for i in 0..180 {
-        let a = i as f32 / 180.0 * std::f32::consts::TAU;
+    const STEPS: usize = 360;
+    let mut outline = Vec::with_capacity(STEPS);
+    for i in 0..STEPS {
+        let a = i as f32 / STEPS as f32 * std::f32::consts::TAU;
         let (dx, dy) = (a.cos(), a.sin());
+        // coarse scan for the outermost inside point, then refine the edge by bisection
         let mut d = 0.0;
         let mut last = 0.0;
         while d < 12.0 {
             if inside(cx + dx * d, cy + dy * d) {
                 last = d;
             }
-            d += 0.04;
+            d += 0.05;
         }
-        outline.push(u(cx + dx * last, cy + dy * last));
+        let (mut lo, mut hi) = (last, last + 0.05);
+        for _ in 0..12 {
+            let mid = (lo + hi) / 2.0;
+            if inside(cx + dx * mid, cy + dy * mid) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        outline.push(u(cx + dx * lo, cy + dy * lo));
     }
     let mut mesh = egui::Mesh::default();
     mesh.colored_vertex(u(cx, cy), theme::p().body);
@@ -381,7 +408,7 @@ impl PadApp {
 
         ui.add_space(10.0);
         theme::title(ui, "Map to");
-        theme::help(ui, "Click to add or remove. Green means it's mapped.");
+        theme::help(ui, "Click to add or remove. Highlighted means it's mapped.");
         ui.add_space(4.0);
         for (group, outs) in layout::OUTPUT_GROUPS {
             ui.label(

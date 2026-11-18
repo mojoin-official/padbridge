@@ -2,7 +2,7 @@
 
 use crate::theme;
 use crate::PadApp;
-use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Stroke};
+use eframe::egui::{self, Align2, FontId, Pos2, Rect, Stroke};
 use padbridge::config::{AxisBinding, MouseAxis};
 use padbridge::mouse::StickStage;
 use padbridge::pad::{AxisTarget, Report};
