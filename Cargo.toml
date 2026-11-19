@@ -44,3 +44,8 @@ codegen-units = 1
 strip = true
 # Do NOT set panic = "abort": the hook callbacks rely on catch_unwind so that a bug can
 # never unwind across the FFI boundary into Windows.
+
+# padbridge-core: the standalone engine from the daily task (DS4/PlayStation, Switch, G-Touch
+# encoders and the curve-aware mouse ledger). Not used by the app yet.
+[workspace]
+members = [".", "crates/padbridge-core"]

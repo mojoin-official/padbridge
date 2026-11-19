@@ -41,6 +41,12 @@ jobs:
         continue-on-error: true
       - name: lint (Windows code paths)
         run: cargo clippy --all-targets
+      - name: padbridge-core tests
+        run: cargo test -p padbridge-core --release
+      - name: padbridge-core lint (with the ViGEm backend)
+        run: cargo clippy -p padbridge-core --all-targets --features vigem -- -D warnings
+      - name: padbridge-core accuracy report
+        run: cargo run -p padbridge-core --release --example accuracy
         continue-on-error: true
 
   # Builds the same app on Linux and photographs every page, so the layout can be checked

@@ -1,0 +1,17 @@
+[package]
+name = "padbridge-core"
+version = "0.2.0"
+edition = "2021"
+description = "Accurate keyboard/mouse -> virtual controller engine for padbridge (XInput, DS4/PlayStation, Switch Pro, GameSir G-Touch)"
+license = "MIT"
+publish = false
+
+[features]
+default = []
+# Windows-only ViGEmBus output (Xbox 360 + DualShock 4 targets).
+vigem = ["dep:vigem-client"]
+
+[target.'cfg(windows)'.dependencies]
+vigem-client = { version = "0.1.4", features = ["unstable_ds4"], optional = true }
+
+[dependencies]
