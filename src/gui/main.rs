@@ -2,6 +2,7 @@
 
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod icon;
 mod settings;
 mod stick;
 mod theme;
@@ -176,6 +177,18 @@ impl PadApp {
             theme::set_opacity(v);
         }
         theme::set(&cc.egui_ctx, chosen);
+        // Icon design: PADBRIDGE_ICON (for screenshots), else the saved choice, else D1.
+        if let Some(d) = std::env::var("PADBRIDGE_ICON")
+            .ok()
+            .or_else(|| {
+                app.store
+                    .as_ref()
+                    .and_then(|s| std::fs::read_to_string(s.dir().join(".icon")).ok())
+            })
+            .and_then(|t| icon::Design::from_key(&t))
+        {
+            icon::set_design(d);
+        }
         // Used for screenshots and for jumping straight to a page.
         if let Some(t) = std::env::var("PADBRIDGE_TAB")
             .ok()
@@ -364,6 +377,9 @@ impl PadApp {
             .frame(theme::bar())
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
+                    let logo = icon::logo(ctx);
+                    ui.add(egui::Image::new(&logo).fit_to_exact_size(egui::vec2(32.0, 32.0)));
+                    ui.add_space(2.0);
                     ui.label(
                         egui::RichText::new("padbridge")
                             .size(22.0)
@@ -822,6 +838,7 @@ impl eframe::App for PadApp {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         theme::paint_backdrop(ctx);
+        icon::sync(ctx);
         self.poll_runtime();
         self.poll_pick(ctx);
         self.poll_diag(ctx);
@@ -855,6 +872,7 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("padbridge")
+            .with_icon(icon::icon_data(icon::Design::D1, theme::Theme::Aurora))
             .with_inner_size([1380.0, 860.0])
             .with_min_inner_size([1100.0, 700.0])
             // Lets the Clear theme show the desktop behind the window. The other themes paint an

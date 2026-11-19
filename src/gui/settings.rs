@@ -100,6 +100,42 @@ impl PadApp {
                     }
                 }
             });
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.label("App icon");
+                ui.add_space(6.0);
+                for d in crate::icon::Design::ALL {
+                    let on = crate::icon::design() == d;
+                    let tex = crate::icon::texture(ui.ctx(), d);
+                    let text = egui::RichText::new(d.label()).color(if on {
+                        theme::p().on_accent
+                    } else {
+                        theme::p().text
+                    });
+                    let b = egui::Button::image_and_text(
+                        egui::Image::new(&tex)
+                            .fit_to_exact_size(egui::vec2(22.0, 22.0)),
+                        text,
+                    )
+                    .fill(if on {
+                        theme::p().accent
+                    } else {
+                        theme::p().card_hi
+                    })
+                    .rounding(18.0)
+                    .min_size(egui::vec2(0.0, 32.0));
+                    if ui.add(b).clicked() && !on {
+                        crate::icon::set_design(d);
+                        if let Some(store) = &self.store {
+                            let _ = std::fs::write(store.dir().join(".icon"), d.key());
+                        }
+                    }
+                }
+            });
+            theme::help(
+                ui,
+                "The window and taskbar icon follow the theme's colours. The icon on the .exe file itself stays the Aurora cursor ring.",
+            );
             if theme::current() == theme::Theme::Clear {
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {

@@ -101,6 +101,7 @@ jobs:
           shoot clear-settings PADBRIDGE_THEME=clear PADBRIDGE_TAB=settings
           shoot clear-keyboard-opacity-0 PADBRIDGE_THEME=clear PADBRIDGE_OPACITY=0 PADBRIDGE_TAB=keyboard PADBRIDGE_SELECT=W
           shoot clear-keyboard-opacity-100 PADBRIDGE_THEME=clear PADBRIDGE_OPACITY=1 PADBRIDGE_TAB=keyboard PADBRIDGE_SELECT=W
+          shoot aurora-settings-icon-d2 PADBRIDGE_THEME=aurora PADBRIDGE_ICON=d2 PADBRIDGE_TAB=settings
           ls -la shots
       - name: publish screenshots
         run: |
