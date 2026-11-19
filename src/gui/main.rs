@@ -98,6 +98,11 @@ pub struct PadApp {
     pub driver_checked: Instant,
     /// "Pick the game window" countdown.
     pub pick_deadline: Option<Instant>,
+    /// Latest driver diagnosis, and the channel of one in progress.
+    pub diag: Option<padbridge::diag::Facts>,
+    pub diag_rx: Option<std::sync::mpsc::Receiver<padbridge::diag::Facts>>,
+    /// Path to Interception's install-interception.exe.
+    pub installer_path: String,
 }
 
 impl PadApp {
@@ -127,6 +132,9 @@ impl PadApp {
             driver_status: padbridge::driver::status(),
             driver_checked: Instant::now(),
             pick_deadline: None,
+            diag: None,
+            diag_rx: None,
+            installer_path: String::new(),
         };
         match ProfileStore::open(ProfileStore::default_dir()) {
             Ok(store) => {
@@ -816,6 +824,7 @@ impl eframe::App for PadApp {
         theme::paint_backdrop(ctx);
         self.poll_runtime();
         self.poll_pick(ctx);
+        self.poll_diag(ctx);
         if self.running() {
             // Live preview and log.
             ctx.request_repaint_after(Duration::from_millis(30));

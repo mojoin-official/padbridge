@@ -743,8 +743,7 @@ fn output_thread(
                 if t <= crate::mouse::RAMP_WAIT_S {
                     test_capture = Some(enabled_now);
                 }
-                if t > crate::mouse::RAMP_WAIT_S && test_capture.is_some_and(|c| c != enabled_now)
-                {
+                if t > crate::mouse::RAMP_WAIT_S && test_capture.is_some_and(|c| c != enabled_now) {
                     *test = StickTest::Found((v - crate::mouse::RAMP_REACTION).max(0.0));
                     test_capture = None;
                 } else if t >= crate::mouse::RAMP_WAIT_S + crate::mouse::RAMP_DURATION_S {

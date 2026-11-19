@@ -317,6 +317,20 @@ api! {
 pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 
 api! {
+    #[link(name = "shell32")]
+    {
+        fn ShellExecuteW(
+            hwnd: HWND,
+            operation: *const u16,
+            file: *const u16,
+            parameters: *const u16,
+            directory: *const u16,
+            show: i32,
+        ) -> HINSTANCE;
+    }
+}
+
+api! {
     #[link(name = "winmm")]
     {
         fn timeBeginPeriod(period: u32) -> u32;

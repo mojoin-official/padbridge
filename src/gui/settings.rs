@@ -247,6 +247,130 @@ impl PadApp {
                         });
                 }
             }
+            ui.add_space(10.0);
+            self.driver_tools(ui);
+        });
+    }
+
+    /// Collects a finished driver diagnosis.
+    pub fn poll_diag(&mut self, ctx: &egui::Context) {
+        let Some(rx) = &self.diag_rx else { return };
+        match rx.try_recv() {
+            Ok(facts) => {
+                self.driver_status = facts.status.clone();
+                self.driver_checked = Instant::now();
+                self.diag = Some(facts);
+                self.diag_rx = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(Duration::from_millis(100));
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.diag_rx = None;
+                self.error("The driver check stopped unexpectedly.");
+            }
+        }
+    }
+
+    fn driver_tools(&mut self, ui: &mut egui::Ui) {
+        theme::title(ui, "Driver diagnosis");
+        ui.horizontal(|ui| {
+            if self.diag_rx.is_some() {
+                ui.add(egui::Spinner::new());
+                ui.label("Checking files, services, filters and Windows security…");
+            } else if ui
+                .button("Diagnose driver")
+                .on_hover_text(
+                    "Checks every step the Interception driver needs and says what to do",
+                )
+                .clicked()
+            {
+                let (tx, rx) = std::sync::mpsc::channel();
+                std::thread::spawn(move || {
+                    let _ = tx.send(padbridge::diag::gather());
+                });
+                self.diag_rx = Some(rx);
+            }
+        });
+        if let Some(facts) = &self.diag {
+            let v = padbridge::diag::conclude(facts);
+            let report = padbridge::diag::report(facts);
+            egui::Frame::default()
+                .fill(theme::p().inset)
+                .rounding(10.0)
+                .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(
+                        egui::RichText::new(&v.title)
+                            .strong()
+                            .size(15.0)
+                            .color(if v.ok {
+                                theme::p().accent
+                            } else {
+                                theme::p().select
+                            }),
+                    );
+                    ui.label(egui::RichText::new(&v.advice).color(theme::p().text));
+                    ui.add_space(4.0);
+                    egui::CollapsingHeader::new("Details")
+                        .id_salt("diag-details")
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new(&report).monospace().size(12.0));
+                        });
+                    if ui
+                        .button("Copy report")
+                        .on_hover_text("Paste it to Claude if you need help")
+                        .clicked()
+                    {
+                        ui.output_mut(|o| o.copied_text = report.clone());
+                        self.info("Driver report copied to the clipboard.");
+                    }
+                });
+        }
+
+        ui.add_space(8.0);
+        theme::title(ui, "Install or remove the driver");
+        theme::help(
+            ui,
+            "Uses install-interception.exe from Interception.zip (github.com/oblitum/Interception \
+             /releases, folder 'command line installer'). Windows asks for administrator \
+             permission; restart the PC afterwards.",
+        );
+        ui.horizontal(|ui| {
+            ui.add_sized(
+                [360.0, 26.0],
+                egui::TextEdit::singleline(&mut self.installer_path)
+                    .hint_text("path to install-interception.exe"),
+            );
+            if ui
+                .button("Find")
+                .on_hover_text("Search padbridge's folder and Downloads")
+                .clicked()
+            {
+                match padbridge::diag::find_installer() {
+                    Some(p) => self.installer_path = p.display().to_string(),
+                    None => self.error(
+                        "install-interception.exe was not found next to padbridge or in \
+                         Downloads. Download and extract Interception.zip first.",
+                    ),
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            let path = std::path::PathBuf::from(self.installer_path.trim());
+            let ready = path.is_file();
+            for (label, uninstall) in [("Install driver", false), ("Uninstall driver", true)] {
+                if ui.add_enabled(ready, egui::Button::new(label)).clicked() {
+                    match padbridge::diag::run_installer(&path, uninstall) {
+                        Ok(()) => self.info(format!(
+                            "{label}: approve the Windows prompt, read the result in the window \
+                             that opens, then restart the PC."
+                        )),
+                        Err(e) => self.error(e),
+                    }
+                }
+            }
         });
     }
 

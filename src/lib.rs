@@ -10,6 +10,7 @@ pub mod app;
 pub mod bindings;
 pub mod capture;
 pub mod config;
+pub mod diag;
 pub mod driver;
 pub mod engine;
 pub mod keys;
