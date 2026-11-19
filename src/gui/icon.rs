@@ -114,10 +114,8 @@ fn half(src: &[u8], size: usize) -> Vec<u8> {
                 acc[3] += a;
             }
             let o = (y * n + x) * 4;
-            if acc[3] > 0 {
-                for c in 0..3 {
-                    out[o + c] = (acc[c] / acc[3]) as u8;
-                }
+            for c in 0..3 {
+                out[o + c] = acc[c].checked_div(acc[3]).unwrap_or(0) as u8;
             }
             out[o + 3] = (acc[3] / 4) as u8;
         }
