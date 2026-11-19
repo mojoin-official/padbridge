@@ -50,6 +50,9 @@ pub struct StickStage {
     backlog_cap: f64,
     deadzone: f64,
     inv_exponent: f64,
+    tick_dt: f64,
+    /// A new window length waiting to be applied the next time the stage is at rest.
+    pending_ticks: Option<usize>,
 }
 
 impl StickStage {
@@ -74,7 +77,25 @@ impl StickStage {
             backlog_cap: max_backlog_s.max(0.0),
             deadzone: deadzone.clamp(0.0, 0.99),
             inv_exponent: 1.0 / curve_exponent.max(0.01),
+            tick_dt,
+            pending_ticks: None,
         }
+    }
+
+    /// Window length in ticks currently in use.
+    pub fn window_ticks(&self) -> usize {
+        self.ring.len()
+    }
+
+    /// Changes the smoothing window. Applied only when the stage is at rest (nothing in the
+    /// window, nothing queued), so changing it never loses or duplicates any movement.
+    pub fn request_window(&mut self, ticks: usize) {
+        let n = ticks.max(1);
+        self.pending_ticks = (n != self.ring.len()).then_some(n);
+    }
+
+    fn at_rest(&self) -> bool {
+        self.pending == (0.0, 0.0) && self.ring.iter().all(|e| *e == (0.0, 0.0))
     }
 
     pub fn window_len(&self) -> f64 {
@@ -95,6 +116,14 @@ impl StickStage {
     /// Feeds one tick of motion (in stick-seconds) and returns the *linear* stick vector for
     /// this tick, `|v| <= 1`. Call [`respond`](Self::respond) to turn it into the value to send.
     pub fn push(&mut self, dx: f64, dy: f64) -> (f64, f64) {
+        if let Some(n) = self.pending_ticks {
+            if self.at_rest() {
+                self.ring = vec![(0.0, 0.0); n];
+                self.idx = 0;
+                self.window = n as f64 * self.tick_dt;
+                self.pending_ticks = None;
+            }
+        }
         self.pending.0 += dx;
         self.pending.1 += dy;
 
@@ -334,6 +363,35 @@ mod tests {
         // slow enough that a typical reaction time costs about RAMP_REACTION
         let per_second = RAMP_MAX / RAMP_DURATION_S;
         assert!((per_second * 0.3 - RAMP_REACTION).abs() < 0.002);
+    }
+
+    #[test]
+    fn window_change_waits_for_rest_and_conserves_motion() {
+        let mut s = StickStage::new(10, DT, 1.0, 0.0, 1.0);
+        let mut sent = 0.0;
+        let mut got = 0.0;
+        for i in 0..200 {
+            if i == 50 {
+                s.request_window(4); // asked mid-motion
+            }
+            let d = if i < 120 { 0.0003 } else { 0.0 };
+            sent += d;
+            got += s.push(d, 0.0).0 * DT;
+            if i < 120 {
+                assert_eq!(s.window_ticks(), 10, "not applied while moving");
+            }
+        }
+        assert_eq!(s.window_ticks(), 4, "applied once at rest");
+        assert!((got - sent).abs() < 1e-12, "{got} vs {sent}");
+        // the new window works: an impulse now lasts 4 ticks
+        s.push(0.0004, 0.0);
+        let mut ticks = 1;
+        while s.push(0.0, 0.0).0 > 0.0 {
+            ticks += 1;
+        }
+        assert_eq!(ticks, 4);
+        s.request_window(4);
+        assert!(s.pending_ticks.is_none(), "same size is a no-op");
     }
 
     #[test]

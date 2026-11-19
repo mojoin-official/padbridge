@@ -87,6 +87,11 @@ max_backlog_ms = 0
 # While mapping is on, stop the mouse moving the desktop cursor.
 swallow_motion = true
 
+# Measure the game's frame rate while playing and set smoothing_ms to one frame automatically
+# (exact when padbridge runs as administrator, otherwise the monitor refresh rate). smoothing_ms
+# above is used until a rate is known, and always when this is false.
+adaptive_frame_rate = true
+
 # Mouse X and Y are bound independently. Delete a section to leave that axis unbound. Each can
 # target any of: LeftStickX, LeftStickY, RightStickX, RightStickY.
 #

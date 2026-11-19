@@ -13,6 +13,7 @@ pub mod config;
 pub mod diag;
 pub mod driver;
 pub mod engine;
+pub mod fps;
 pub mod keys;
 pub mod layout;
 pub mod mapper;

@@ -47,6 +47,11 @@ impl Engine {
     }
 
     /// Forces capture on or off (used for fail-safe shutdown of mapping).
+    /// Changes the mouse smoothing window (see [`Mapper::set_smoothing_ms`]).
+    pub fn set_smoothing_ms(&mut self, ms: f64) {
+        self.mapper.set_smoothing_ms(ms);
+    }
+
     pub fn set_enabled(&mut self, on: bool) {
         self.capture.set_enabled(on, &mut self.mapper);
     }

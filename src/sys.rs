@@ -186,6 +186,126 @@ pub struct WNDCLASSEXW {
     pub hIconSm: HANDLE,
 }
 
+// ---- event tracing (frame-rate measurement) ---------------------------------------------
+pub const WNODE_FLAG_TRACED_GUID: u32 = 0x0002_0000;
+pub const EVENT_TRACE_REAL_TIME_MODE: u32 = 0x0000_0100;
+pub const PROCESS_TRACE_MODE_REAL_TIME: u32 = 0x0000_0100;
+pub const PROCESS_TRACE_MODE_EVENT_RECORD: u32 = 0x1000_0000;
+pub const EVENT_CONTROL_CODE_ENABLE_PROVIDER: u32 = 1;
+pub const EVENT_TRACE_CONTROL_STOP: u32 = 1;
+pub const TRACE_LEVEL_INFORMATION: u8 = 4;
+pub const INVALID_PROCESSTRACE_HANDLE: u64 = u64::MAX;
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct GUID {
+    pub data1: u32,
+    pub data2: u16,
+    pub data3: u16,
+    pub data4: [u8; 8],
+}
+
+#[repr(C)]
+pub struct WNODE_HEADER {
+    pub BufferSize: u32,
+    pub ProviderId: u32,
+    pub HistoricalContext: u64,
+    pub TimeStamp: i64,
+    pub Guid: GUID,
+    pub ClientContext: u32,
+    pub Flags: u32,
+}
+
+#[repr(C)]
+pub struct EVENT_TRACE_PROPERTIES {
+    pub Wnode: WNODE_HEADER,
+    pub BufferSize: u32,
+    pub MinimumBuffers: u32,
+    pub MaximumBuffers: u32,
+    pub MaximumFileSize: u32,
+    pub LogFileMode: u32,
+    pub FlushTimer: u32,
+    pub EnableFlags: u32,
+    pub AgeLimit: i32,
+    pub NumberOfBuffers: u32,
+    pub FreeBuffers: u32,
+    pub EventsLost: u32,
+    pub BuffersWritten: u32,
+    pub LogBuffersLost: u32,
+    pub RealTimeBuffersLost: u32,
+    pub LoggerThreadId: HANDLE,
+    pub LogFileNameOffset: u32,
+    pub LoggerNameOffset: u32,
+}
+
+/// `EVENT_RECORD` with its `EVENT_HEADER` flattened (only the fields padbridge reads are named).
+#[repr(C)]
+pub struct EVENT_RECORD {
+    pub Size: u16,
+    pub HeaderType: u16,
+    pub Flags: u16,
+    pub EventProperty: u16,
+    pub ThreadId: u32,
+    pub ProcessId: u32,
+    pub TimeStamp: i64,
+    pub ProviderId: GUID,
+    pub Id: u16,
+    pub Version: u8,
+    pub Channel: u8,
+    pub Level: u8,
+    pub Opcode: u8,
+    pub Task: u16,
+    pub Keyword: u64,
+    pub ProcessorTime: u64,
+    pub ActivityId: GUID,
+    pub BufferContext: u32,
+    pub ExtendedDataCount: u16,
+    pub UserDataLength: u16,
+    pub ExtendedData: *mut c_void,
+    pub UserData: *mut c_void,
+    pub UserContext: *mut c_void,
+}
+
+pub type EVENT_RECORD_CALLBACK = Option<unsafe extern "system" fn(*mut EVENT_RECORD)>;
+
+/// `EVENT_TRACE_LOGFILEW`; the embedded `EVENT_TRACE` and `TRACE_LOGFILE_HEADER`, which padbridge
+/// never reads, are kept as correctly sized and aligned opaque blocks.
+#[repr(C)]
+pub struct EVENT_TRACE_LOGFILEW {
+    pub LogFileName: *mut u16,
+    pub LoggerName: *mut u16,
+    pub CurrentTime: i64,
+    pub BuffersRead: u32,
+    pub ProcessTraceMode: u32,
+    pub CurrentEvent: [u8; 88],
+    pub LogfileHeader: [u64; 35],
+    pub BufferCallback: *mut c_void,
+    pub BufferSize: u32,
+    pub Filled: u32,
+    pub EventsLost: u32,
+    pub EventRecordCallback: EVENT_RECORD_CALLBACK,
+    pub IsKernelTrace: u32,
+    pub Context: *mut c_void,
+}
+
+// ---- monitors ----------------------------------------------------------------------------
+pub const MONITOR_DEFAULTTONEAREST: u32 = 2;
+pub const ENUM_CURRENT_SETTINGS: u32 = 0xFFFF_FFFF;
+
+#[repr(C)]
+pub struct MONITORINFOEXW {
+    pub cbSize: u32,
+    pub rcMonitor: [i32; 4],
+    pub rcWork: [i32; 4],
+    pub dwFlags: u32,
+    pub szDevice: [u16; 32],
+}
+
+/// `DEVMODEW` as an opaque, 4-byte aligned block: `dmSize` is the u16 at byte 68 and
+/// `dmDisplayFrequency` the u32 at byte 184.
+#[repr(C)]
+pub struct DEVMODEW(pub [u32; 55]);
+
 #[cfg(target_pointer_width = "64")]
 const _: () = {
     use std::mem::{offset_of, size_of};
@@ -198,6 +318,20 @@ const _: () = {
     assert!(size_of::<RAWMOUSE>() == 24);
     assert!(size_of::<RAWINPUT>() == 48);
     assert!(size_of::<WNDCLASSEXW>() == 80);
+    assert!(size_of::<WNODE_HEADER>() == 48);
+    assert!(size_of::<EVENT_TRACE_PROPERTIES>() == 120);
+    assert!(offset_of!(EVENT_TRACE_PROPERTIES, LoggerNameOffset) == 116);
+    assert!(size_of::<EVENT_RECORD>() == 112);
+    assert!(offset_of!(EVENT_RECORD, ProcessId) == 12);
+    assert!(offset_of!(EVENT_RECORD, ProviderId) == 24);
+    assert!(offset_of!(EVENT_RECORD, Id) == 40);
+    assert!(offset_of!(EVENT_RECORD, UserData) == 96);
+    assert!(size_of::<EVENT_TRACE_LOGFILEW>() == 448);
+    assert!(offset_of!(EVENT_TRACE_LOGFILEW, LogfileHeader) == 120);
+    assert!(offset_of!(EVENT_TRACE_LOGFILEW, EventRecordCallback) == 424);
+    assert!(offset_of!(EVENT_TRACE_LOGFILEW, Context) == 440);
+    assert!(size_of::<MONITORINFOEXW>() == 104);
+    assert!(size_of::<DEVMODEW>() == 220);
     assert!(offset_of!(RAWMOUSE, lLastX) == 12);
     assert!(offset_of!(RAWMOUSE, lLastY) == 16);
     assert!(offset_of!(RAWINPUT, mouse) == 24);
@@ -342,6 +476,41 @@ api! {
 pub const SND_ASYNC: u32 = 0x0001;
 pub const SND_NODEFAULT: u32 = 0x0002;
 pub const SND_MEMORY: u32 = 0x0004;
+
+api! {
+    #[link(name = "advapi32")]
+    {
+        fn StartTraceW(handle: *mut u64, name: *const u16, props: *mut EVENT_TRACE_PROPERTIES) -> u32;
+        fn ControlTraceW(
+            handle: u64,
+            name: *const u16,
+            props: *mut EVENT_TRACE_PROPERTIES,
+            code: u32,
+        ) -> u32;
+        fn EnableTraceEx2(
+            handle: u64,
+            provider: *const GUID,
+            code: u32,
+            level: u8,
+            match_any: u64,
+            match_all: u64,
+            timeout: u32,
+            params: *const c_void,
+        ) -> u32;
+        fn OpenTraceW(logfile: *mut EVENT_TRACE_LOGFILEW) -> u64;
+        fn ProcessTrace(handles: *const u64, count: u32, start: *const c_void, end: *const c_void) -> u32;
+        fn CloseTrace(handle: u64) -> u32;
+    }
+}
+
+api! {
+    #[link(name = "user32")]
+    {
+        fn MonitorFromWindow(hwnd: HWND, flags: u32) -> HANDLE;
+        fn GetMonitorInfoW(monitor: HANDLE, info: *mut MONITORINFOEXW) -> BOOL;
+        fn EnumDisplaySettingsW(device: *const u16, mode: u32, devmode: *mut DEVMODEW) -> BOOL;
+    }
+}
 
 /// UTF-16, NUL-terminated.
 pub fn wide(s: &str) -> Vec<u16> {

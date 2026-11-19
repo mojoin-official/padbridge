@@ -104,6 +104,10 @@ struct Shared {
     last_report: Mutex<Report>,
     /// Deadzone finder state; while running it overrides one stick.
     test: Mutex<StickTest>,
+    /// Follow the game's frame rate with the mouse smoothing.
+    adaptive: bool,
+    /// Latest frame rate in use and where it came from (for the app).
+    frame_rate: Mutex<Option<(f64, crate::fps::Source)>>,
     ignore_injected: bool,
     sniff: bool,
     notices: mpsc::Sender<Notice>,
@@ -671,6 +675,29 @@ fn output_thread(
     let mut raw_check_due = Instant::now() + Duration::from_secs(2);
     let mut raw_warned = false;
     let mut test_capture: Option<bool> = None;
+    // Adaptive frame detection: exact measurement when the trace can run, else monitor refresh.
+    let mut meter = None;
+    if shared.adaptive {
+        match crate::fps::FrameMeter::start() {
+            Ok(m) => {
+                meter = Some(m);
+                let _ = shared.notices.send(Notice::Info(
+                    "frame rate: measuring the game's frames".to_string(),
+                ));
+            }
+            Err(e) => {
+                let _ = shared.notices.send(Notice::Info(format!(
+                    "frame rate: using the monitor refresh rate (exact measurement {e})"
+                )));
+            }
+        }
+    }
+    let mut fps_due = Instant::now();
+    let mut fps_filter = crate::fps::FpsFilter::default();
+    let mut fps_source: Option<crate::fps::Source> = None;
+    let mut last_measured: Option<(Instant, u32, f64)> = None;
+    let mut smoothing_now = 0.0f64;
+    let tick_ms = 1000.0 / f64::from(hz);
     let mut focus_due = Instant::now();
     let mut focus_last: Option<bool> = None;
 
@@ -716,6 +743,37 @@ fn output_thread(
                         .to_string(),
                     ));
                 }
+            }
+        }
+        if shared.adaptive && now >= fps_due {
+            fps_due = now + crate::fps::SAMPLE_EVERY;
+            use crate::fps::{self as fps, Source};
+            let pid = fps::foreground_pid();
+            let mut measured = meter.as_mut().and_then(|m| m.sample(pid));
+            if let Some(f) = measured {
+                last_measured = Some((now, pid, f));
+            } else if let Some((t, p, f)) = last_measured {
+                // ride out a brief gap (loading screen, alt-tab flicker) for the same program
+                if p == pid && now.duration_since(t) < Duration::from_secs(3) {
+                    measured = Some(f);
+                }
+            }
+            let reading = match measured {
+                Some(f) => Some((f, Source::Measured)),
+                None => fps::foreground_refresh_hz().map(|f| (f, Source::Refresh)),
+            };
+            if let Some((raw, source)) = reading {
+                if fps_source != Some(source) {
+                    fps_filter.reset();
+                    fps_source = Some(source);
+                }
+                let f = fps_filter.update(raw);
+                let ms = fps::smoothing_for_fps(f);
+                if (ms - smoothing_now).abs() >= tick_ms {
+                    lock(&shared.engine).set_smoothing_ms(ms);
+                    smoothing_now = ms;
+                }
+                *lock(&shared.frame_rate) = Some((f, source));
             }
         }
         let elapsed = now.duration_since(last_tick).as_secs_f64();
@@ -1012,6 +1070,8 @@ impl Runtime {
             running: AtomicBool::new(true),
             last_report: Mutex::new(Report::default()),
             test: Mutex::new(StickTest::Idle),
+            adaptive: cfg.mouse.adaptive_frame_rate && !cfg.axes.is_empty(),
+            frame_rate: Mutex::new(None),
             ignore_injected: cfg.general.ignore_injected,
             sniff: opts.sniff,
             notices: notice_tx,
@@ -1109,6 +1169,12 @@ impl Runtime {
     pub fn set_enabled(&self, on: bool) {
         lock(&self.shared.engine).set_enabled(on);
         let _ = self.shared.notices.send(Notice::Toggled(on));
+    }
+
+    /// The frame rate the mouse smoothing currently follows, and where it came from (`None`
+    /// when adaptive detection is off or nothing is known yet).
+    pub fn frame_rate(&self) -> Option<(f64, crate::fps::Source)> {
+        *lock(&self.shared.frame_rate)
     }
 
     /// Starts the deadzone finder on the left or right stick.

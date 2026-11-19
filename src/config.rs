@@ -393,6 +393,8 @@ pub struct MouseCfg {
     pub curve_exponent: f64,
     pub max_backlog_ms: f64,
     pub swallow_motion: bool,
+    /// Follow the game's frame rate automatically (smoothing_ms is the fallback).
+    pub adaptive_frame_rate: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -641,6 +643,7 @@ fn parse_mouse(doc: &Document) -> Result<MouseCfg, ConfigError> {
         "curve_exponent",
         "max_backlog_ms",
         "swallow_motion",
+        "adaptive_frame_rate",
     ];
     let mut r = Reader::new(doc, "mouse");
     let m = MouseCfg {
@@ -649,6 +652,7 @@ fn parse_mouse(doc: &Document) -> Result<MouseCfg, ConfigError> {
         curve_exponent: r.number("curve_exponent", 1.0, 0.1, 10.0)?,
         max_backlog_ms: r.number("max_backlog_ms", 0.0, 0.0, 5000.0)?,
         swallow_motion: r.boolean("swallow_motion", true)?,
+        adaptive_frame_rate: r.boolean("adaptive_frame_rate", true)?,
     };
     r.finish(KEYS)?;
     Ok(m)
@@ -908,6 +912,10 @@ impl Config {
         s.push_str(&format!("curve_exponent = {}\n", m.curve_exponent));
         s.push_str(&format!("max_backlog_ms = {}\n", m.max_backlog_ms));
         s.push_str(&format!("swallow_motion = {}\n", m.swallow_motion));
+        s.push_str(&format!(
+            "adaptive_frame_rate = {}\n",
+            m.adaptive_frame_rate
+        ));
 
         for (axis, section) in [
             (MouseAxis::X, "axis.mouse_x"),

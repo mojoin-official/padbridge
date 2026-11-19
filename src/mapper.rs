@@ -150,6 +150,14 @@ impl Mapper {
         }
     }
 
+    /// Changes the mouse smoothing window (applied when the mouse is next at rest).
+    pub fn set_smoothing_ms(&mut self, ms: f64) {
+        let ticks = (ms / 1000.0 / self.tick_dt).round().max(1.0) as usize;
+        for s in self.stages.iter_mut().flatten() {
+            s.request_window(ticks);
+        }
+    }
+
     pub fn tick_dt(&self) -> f64 {
         self.tick_dt
     }

@@ -331,6 +331,7 @@ impl PadApp {
             ),
         ];
         const FRAME_RATES: [u32; 7] = [30, 60, 120, 144, 165, 240, 360];
+        let live_fps = self.runtime.as_ref().and_then(|r| r.frame_rate());
         theme::card().show(ui, |ui| {
             ui.set_width(ui.available_width());
             theme::title(ui, "Motion feel (both axes)");
@@ -391,33 +392,66 @@ impl PadApp {
                     let m = &mut self.cfg.mouse;
                     ui.label("Game frame rate");
                     ui.horizontal(|ui| {
-                        let current = FRAME_RATES
-                            .iter()
-                            .copied()
-                            .find(|f| (1000.0 / f64::from(*f)).round() == m.smoothing_ms);
-                        egui::ComboBox::from_id_salt("frame-rate")
-                            .width(110.0)
-                            .selected_text(match current {
-                                Some(f) => format!("{f} fps"),
-                                None => "Custom".to_string(),
-                            })
-                            .show_ui(ui, |ui| {
-                                for f in FRAME_RATES {
-                                    if ui
-                                        .selectable_label(current == Some(f), format!("{f} fps"))
-                                        .clicked()
-                                    {
-                                        m.smoothing_ms = (1000.0 / f64::from(f)).round();
+                        ui.checkbox(&mut m.adaptive_frame_rate, "Detect automatically")
+                            .on_hover_text(
+                                "Measures the game's frame rate while mapping runs and spreads \
+                                 each mouse movement over exactly one frame. Exact when \
+                                 padbridge runs as administrator; otherwise uses the monitor \
+                                 refresh rate.",
+                            );
+                        if !m.adaptive_frame_rate {
+                            let current = FRAME_RATES
+                                .iter()
+                                .copied()
+                                .find(|f| (1000.0 / f64::from(*f)).round() == m.smoothing_ms);
+                            egui::ComboBox::from_id_salt("frame-rate")
+                                .width(110.0)
+                                .selected_text(match current {
+                                    Some(f) => format!("{f} fps"),
+                                    None => "Custom".to_string(),
+                                })
+                                .show_ui(ui, |ui| {
+                                    for f in FRAME_RATES {
+                                        if ui
+                                            .selectable_label(
+                                                current == Some(f),
+                                                format!("{f} fps"),
+                                            )
+                                            .clicked()
+                                        {
+                                            m.smoothing_ms = (1000.0 / f64::from(f)).round();
+                                        }
                                     }
-                                }
-                            });
-                        ui.add(
-                            egui::Slider::new(&mut m.smoothing_ms, 0.0..=50.0)
-                                .suffix(" ms")
-                                .max_decimals(0),
-                        );
+                                });
+                            ui.add(
+                                egui::Slider::new(&mut m.smoothing_ms, 0.0..=50.0)
+                                    .suffix(" ms")
+                                    .max_decimals(0),
+                            );
+                        }
                     });
-                    theme::help(ui, "Match your game's fps: nothing missed, no added lag.");
+                    if m.adaptive_frame_rate {
+                        match live_fps {
+                            Some((f, src)) => {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Following {f:.0} fps ({}): {:.1} ms",
+                                        src.describe(),
+                                        padbridge::fps::smoothing_for_fps(f)
+                                    ))
+                                    .size(12.5)
+                                    .color(theme::p().accent),
+                                );
+                            }
+                            None => theme::help(
+                                ui,
+                                "Detected while mapping runs. Run padbridge as administrator for \
+                                 an exact reading.",
+                            ),
+                        }
+                    } else {
+                        theme::help(ui, "Match your game's fps: nothing missed, no added lag.");
+                    }
                     ui.end_row();
 
                     ui.label("Catch-up after flicks");
