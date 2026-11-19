@@ -417,11 +417,7 @@ impl PadApp {
                                 .max_decimals(0),
                         );
                     });
-                    theme::help(
-                        ui,
-                        "Pick the frame rate the game runs at. Spreads each mouse movement over \
-                         one game frame, so the game never misses any and adds no extra lag.",
-                    );
+                    theme::help(ui, "Match your game's fps: nothing missed, no added lag.");
                     ui.end_row();
 
                     ui.label("Catch-up after flicks");
