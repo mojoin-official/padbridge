@@ -40,6 +40,8 @@ impl PadApp {
                         self.axis_card(&mut cols[1], MouseAxis::Y);
                     });
                     ui.add_space(12.0);
+                    self.calibrate_card(ui);
+                    ui.add_space(12.0);
                     self.motion_card(ui);
                 });
             });
@@ -196,28 +198,139 @@ impl PadApp {
         });
     }
 
+    fn calibrate_card(&mut self, ui: &mut egui::Ui) {
+        use padbridge::app::StickTest;
+        use padbridge::mouse::{RAMP_MAX, RAMP_WAIT_S};
+        theme::card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            theme::title(ui, "Calibrate in your game");
+            theme::help(
+                ui,
+                "Most games ignore small stick movements (a deadzone). If padbridge doesn't \
+                 know yours, small mouse movements do nothing and then jump. This finds it:",
+            );
+            let hotkey = self.cfg.general.toggle_hotkey.to_string();
+            theme::help(
+                ui,
+                &format!(
+                    "1. Start mapping (not Test mode) and click Find deadzone. 2. Switch to the \
+                     game within {RAMP_WAIT_S:.0} s and leave the mouse still. 3. padbridge \
+                     slowly turns the camera stick; press {hotkey} the moment the camera starts \
+                     moving, then {hotkey} again to resume."
+                ),
+            );
+            ui.add_space(6.0);
+            let left = crate::stick::uses(self, true) && !crate::stick::uses(self, false);
+            let mut use_value: Option<f64> = None;
+            match &self.runtime {
+                None => {
+                    ui.add_enabled(false, egui::Button::new("Find deadzone"));
+                    theme::help(ui, "Press Start first.");
+                }
+                Some(rt) => match rt.stick_test() {
+                    StickTest::Idle => {
+                        if ui.button("Find deadzone").clicked() {
+                            rt.start_stick_test(left);
+                        }
+                    }
+                    StickTest::Running { started, value, .. } => {
+                        let waited = started.elapsed().as_secs_f64();
+                        ui.horizontal(|ui| {
+                            if waited < RAMP_WAIT_S {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Switch to the game now… {:.0}",
+                                        (RAMP_WAIT_S - waited).ceil()
+                                    ))
+                                    .color(theme::p().select)
+                                    .strong(),
+                                );
+                            } else {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "Pushing the stick: {:.0}% of {:.0}%. Press {hotkey} \
+                                         when the camera starts moving.",
+                                        value * 100.0,
+                                        RAMP_MAX * 100.0
+                                    ))
+                                    .color(theme::p().accent)
+                                    .strong(),
+                                );
+                            }
+                            if ui.button("Cancel").clicked() {
+                                rt.clear_stick_test();
+                            }
+                        });
+                        ui.ctx()
+                            .request_repaint_after(std::time::Duration::from_millis(100));
+                    }
+                    StickTest::Found(v) => {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Found: the camera starts moving at {:.0}% stick.",
+                                    v * 100.0
+                                ))
+                                .color(theme::p().accent)
+                                .strong(),
+                            );
+                            if ui.button("Use it").clicked() {
+                                use_value = Some(v);
+                                rt.clear_stick_test();
+                            }
+                            if ui.button("Try again").clicked() {
+                                rt.start_stick_test(left);
+                            }
+                        });
+                    }
+                    StickTest::NotFound => {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new(
+                                    "No press seen. Was the game in front and mapping running \
+                                     (not Test mode)?",
+                                )
+                                .color(theme::p().select),
+                            );
+                            if ui.button("Try again").clicked() {
+                                rt.start_stick_test(left);
+                            }
+                        });
+                    }
+                },
+            }
+            if let Some(v) = use_value {
+                self.cfg.mouse.deadzone = (v * 1000.0).round() / 1000.0;
+                self.info(format!(
+                    "Game deadzone set to {:.3}. Click 'Apply changes' at the top to use it, and \
+                     Save to keep it.",
+                    self.cfg.mouse.deadzone
+                ));
+            }
+        });
+    }
+
     fn motion_card(&mut self, ui: &mut egui::Ui) {
-        // (name, smoothing ms, catch-up ms, description)
-        const PRESETS: [(&str, f64, f64, &str); 3] = [
+        // (name, catch-up ms, description). Smoothing follows the game frame rate instead.
+        const PRESETS: [(&str, f64, &str); 3] = [
             (
-                "Snappy",
-                6.0,
+                "Precise",
                 0.0,
-                "Lowest lag. Very fast flicks are cut at the stick's top speed.",
+                "Default. The camera stops the instant your hand stops; very fast flicks are \
+                 capped at the stick's top speed.",
             ),
             (
                 "Balanced",
-                10.0,
                 50.0,
-                "Default. Short catch-up after fast flicks.",
+                "Short catch-up after very fast flicks (the camera may move on briefly).",
             ),
             (
                 "Exact distance",
-                16.0,
                 300.0,
                 "Every count is played out, so fast flicks land exactly but keep turning briefly.",
             ),
         ];
+        const FRAME_RATES: [u32; 7] = [30, 60, 120, 144, 165, 240, 360];
         theme::card().show(ui, |ui| {
             ui.set_width(ui.available_width());
             theme::title(ui, "Motion feel (both axes)");
@@ -225,9 +338,9 @@ impl PadApp {
 
             ui.horizontal(|ui| {
                 ui.label("Preset");
-                for (name, smooth, catch, desc) in PRESETS {
+                for (name, catch, desc) in PRESETS {
                     let m = &self.cfg.mouse;
-                    let active = m.smoothing_ms == smooth && m.max_backlog_ms == catch;
+                    let active = m.max_backlog_ms == catch;
                     let text = egui::RichText::new(name).color(if active {
                         theme::p().on_accent
                     } else {
@@ -239,7 +352,6 @@ impl PadApp {
                         theme::p().card_hi
                     });
                     if ui.add(b).on_hover_text(desc).clicked() {
-                        self.cfg.mouse.smoothing_ms = smooth;
                         self.cfg.mouse.max_backlog_ms = catch;
                     }
                 }
@@ -277,13 +389,39 @@ impl PadApp {
                     ui.end_row();
 
                     let m = &mut self.cfg.mouse;
-                    ui.label("Smoothing");
-                    ui.add(
-                        egui::Slider::new(&mut m.smoothing_ms, 0.0..=50.0)
-                            .suffix(" ms")
-                            .max_decimals(0),
+                    ui.label("Game frame rate");
+                    ui.horizontal(|ui| {
+                        let current = FRAME_RATES
+                            .iter()
+                            .copied()
+                            .find(|f| (1000.0 / f64::from(*f)).round() == m.smoothing_ms);
+                        egui::ComboBox::from_id_salt("frame-rate")
+                            .width(110.0)
+                            .selected_text(match current {
+                                Some(f) => format!("{f} fps"),
+                                None => "Custom".to_string(),
+                            })
+                            .show_ui(ui, |ui| {
+                                for f in FRAME_RATES {
+                                    if ui
+                                        .selectable_label(current == Some(f), format!("{f} fps"))
+                                        .clicked()
+                                    {
+                                        m.smoothing_ms = (1000.0 / f64::from(f)).round();
+                                    }
+                                }
+                            });
+                        ui.add(
+                            egui::Slider::new(&mut m.smoothing_ms, 0.0..=50.0)
+                                .suffix(" ms")
+                                .max_decimals(0),
+                        );
+                    });
+                    theme::help(
+                        ui,
+                        "Pick the frame rate the game runs at. Spreads each mouse movement over \
+                         one game frame, so the game never misses any and adds no extra lag.",
                     );
-                    theme::help(ui, "About one game frame: 16 at 60 fps, 7 at 144 fps.");
                     ui.end_row();
 
                     ui.label("Catch-up after flicks");
@@ -329,16 +467,18 @@ impl PadApp {
             ui.set_width(ui.available_width());
             theme::title(ui, "Feels slow or floaty?");
             for line in [
-                "1. Camera keeps moving after your hand stops: lower 'Catch-up after flicks', \
-                 or pick Snappy.",
-                "2. Everything is too slow: raise 'Overall speed'. Watch the live preview: normal \
-                 movements should push the green dot well out from the centre.",
-                "3. Fast turns hit a ceiling: that is the game's top stick speed. In the game, set \
-                 controller look sensitivity to maximum and turn off look acceleration / aim \
-                 slowdown; padbridge cannot turn faster than the stick allows.",
-                "4. Small movements do nothing, then jump: raise 'Game deadzone'. Small movements \
-                 crawl: raise 'Game response curve'.",
-                "5. Apply changes while running with 'Apply changes' at the top.",
+                "1. Small movements do nothing, then jump (no precision): use 'Find deadzone' \
+                 above. This matters more than anything else.",
+                "2. Camera keeps moving after your hand stops: pick Precise, and turn off look \
+                 acceleration / aim smoothing in the game's controller settings.",
+                "3. Everything is too slow: raise 'Overall speed', or calibrate each axis from a \
+                 360° turn.",
+                "4. Fast turns hit a ceiling: that is the game's top stick speed. Set the game's \
+                 controller look sensitivity to maximum; padbridge cannot turn faster than the \
+                 stick allows.",
+                "5. Small movements crawl compared with big ones: raise 'Game response curve' \
+                 (many games use about 2).",
+                "6. Apply changes while running with 'Apply changes' at the top.",
             ] {
                 theme::help(ui, line);
             }

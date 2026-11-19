@@ -27,6 +27,20 @@
 //! [`StickStage::respond`] then undoes the game's own input shaping so that the *game's* result
 //! equals the intended speed: radial deadzone compensation plus an inverse response curve.
 
+/// Deadzone finder: seconds of centred stick before the ramp starts (time to switch to the game).
+pub const RAMP_WAIT_S: f64 = 4.0;
+/// Seconds the ramp takes to reach [`RAMP_MAX`].
+pub const RAMP_DURATION_S: f64 = 20.0;
+/// Largest deflection the finder tries; no sensible game deadzone is bigger.
+pub const RAMP_MAX: f64 = 0.7;
+/// Reaction-time allowance subtracted from the marked value (about 0.3 s of ramp).
+pub const RAMP_REACTION: f64 = 0.01;
+
+/// Stick deflection the deadzone finder sends `t` seconds after it started.
+pub fn deadzone_ramp(t: f64) -> f64 {
+    ((t - RAMP_WAIT_S) / RAMP_DURATION_S).clamp(0.0, 1.0) * RAMP_MAX
+}
+
 #[derive(Debug, Clone)]
 pub struct StickStage {
     ring: Vec<(f64, f64)>,
@@ -308,6 +322,18 @@ mod tests {
             assert!(moving < 20);
         }
         assert!(moving <= 10, "returns to centre within one window");
+    }
+
+    #[test]
+    fn deadzone_ramp_waits_then_rises_slowly_to_its_cap() {
+        assert_eq!(deadzone_ramp(0.0), 0.0);
+        assert_eq!(deadzone_ramp(RAMP_WAIT_S), 0.0);
+        let mid = deadzone_ramp(RAMP_WAIT_S + RAMP_DURATION_S / 2.0);
+        assert!((mid - RAMP_MAX / 2.0).abs() < 1e-12);
+        assert_eq!(deadzone_ramp(RAMP_WAIT_S + RAMP_DURATION_S + 5.0), RAMP_MAX);
+        // slow enough that a typical reaction time costs about RAMP_REACTION
+        let per_second = RAMP_MAX / RAMP_DURATION_S;
+        assert!((per_second * 0.3 - RAMP_REACTION).abs() < 0.002);
     }
 
     #[test]

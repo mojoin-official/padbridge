@@ -39,6 +39,23 @@ pub struct RunOptions {
     pub print_reports: bool,
 }
 
+/// State of the in-game deadzone finder.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum StickTest {
+    Idle,
+    /// Pushing the stick slowly outward. `value` is the deflection being sent now (0 during the
+    /// initial wait while the user switches to the game).
+    Running {
+        started: Instant,
+        left: bool,
+        value: f64,
+    },
+    /// The user pressed the pause/resume hotkey when the camera started moving.
+    Found(f64),
+    /// The ramp finished without a press.
+    NotFound,
+}
+
 /// How input is being read by a running instance.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Backend {
@@ -85,6 +102,8 @@ struct Shared {
     running: AtomicBool,
     /// Most recent report, for live previews.
     last_report: Mutex<Report>,
+    /// Deadzone finder state; while running it overrides one stick.
+    test: Mutex<StickTest>,
     ignore_injected: bool,
     sniff: bool,
     notices: mpsc::Sender<Notice>,
@@ -651,6 +670,7 @@ fn output_thread(
     let mut last_warn: Option<Instant> = None;
     let mut raw_check_due = Instant::now() + Duration::from_secs(2);
     let mut raw_warned = false;
+    let mut test_capture: Option<bool> = None;
     let mut focus_due = Instant::now();
     let mut focus_last: Option<bool> = None;
 
@@ -708,7 +728,47 @@ fn output_thread(
 
         let dx = shared.dx.swap(0, Ordering::AcqRel);
         let dy = shared.dy.swap(0, Ordering::AcqRel);
-        let report = lock(&shared.engine).step(elapsed, dx, dy);
+        let (mut report, enabled_now) = {
+            let mut engine = lock(&shared.engine);
+            (engine.step(elapsed, dx, dy), engine.enabled())
+        };
+        {
+            // Deadzone finder: override one stick with a slow ramp; the user marks the moment
+            // the camera starts moving by pressing the pause/resume hotkey (seen as a change in
+            // capture state after the initial wait).
+            let mut test = lock(&shared.test);
+            if let StickTest::Running { started, left, .. } = *test {
+                let t = started.elapsed().as_secs_f64();
+                let v = crate::mouse::deadzone_ramp(t);
+                if t <= crate::mouse::RAMP_WAIT_S {
+                    test_capture = Some(enabled_now);
+                }
+                if t > crate::mouse::RAMP_WAIT_S && test_capture.is_some_and(|c| c != enabled_now)
+                {
+                    *test = StickTest::Found((v - crate::mouse::RAMP_REACTION).max(0.0));
+                    test_capture = None;
+                } else if t >= crate::mouse::RAMP_WAIT_S + crate::mouse::RAMP_DURATION_S {
+                    *test = StickTest::NotFound;
+                    test_capture = None;
+                } else {
+                    *test = StickTest::Running {
+                        started,
+                        left,
+                        value: v,
+                    };
+                    let i = crate::pad::axis_to_i16(v);
+                    if left {
+                        report.thumb_lx = i;
+                        report.thumb_ly = 0;
+                    } else {
+                        report.thumb_rx = i;
+                        report.thumb_ry = 0;
+                    }
+                }
+            } else {
+                test_capture = None;
+            }
+        }
         *lock(&shared.last_report) = report;
 
         if report == sent && failing_since.is_none() {
@@ -952,6 +1012,7 @@ impl Runtime {
             game_exe: cfg.general.game_exe.trim().to_string(),
             running: AtomicBool::new(true),
             last_report: Mutex::new(Report::default()),
+            test: Mutex::new(StickTest::Idle),
             ignore_injected: cfg.general.ignore_injected,
             sniff: opts.sniff,
             notices: notice_tx,
@@ -1049,6 +1110,25 @@ impl Runtime {
     pub fn set_enabled(&self, on: bool) {
         lock(&self.shared.engine).set_enabled(on);
         let _ = self.shared.notices.send(Notice::Toggled(on));
+    }
+
+    /// Starts the deadzone finder on the left or right stick.
+    pub fn start_stick_test(&self, left: bool) {
+        *lock(&self.shared.test) = StickTest::Running {
+            started: Instant::now(),
+            left,
+            value: 0.0,
+        };
+    }
+
+    /// Current deadzone finder state.
+    pub fn stick_test(&self) -> StickTest {
+        *lock(&self.shared.test)
+    }
+
+    /// Stops the deadzone finder (or clears its result).
+    pub fn clear_stick_test(&self) {
+        *lock(&self.shared.test) = StickTest::Idle;
     }
 
     /// Mouse movement packets received since start (diagnostics: 0 while moving the mouse means

@@ -68,7 +68,7 @@ game_exe = ""
 # Mouse motion is spread over this window before it reaches the stick. Games sample a stick once
 # per frame; if this is shorter than one game frame, motion can be missed. Rule of thumb: about
 # one frame time of your game (16 for 60 fps, 7 for 144 fps). 0 = no smoothing.
-smoothing_ms = 10
+smoothing_ms = 8
 
 # The game's inner deadzone as a fraction of full stick. Stick output is lifted past it so the
 # smallest mouse movement is not swallowed. XInput's standard right-stick deadzone is 0.265, the
@@ -82,7 +82,7 @@ curve_exponent = 1.0
 # played back at full stick, so distance is preserved. This caps how much may queue (ms of full
 # stick); anything beyond is dropped. Higher = exact distance on fast flicks, but the camera keeps
 # turning after your hand stops (feels like moving through honey). Lower = snappier.
-max_backlog_ms = 50
+max_backlog_ms = 0
 
 # While mapping is on, stop the mouse moving the desktop cursor.
 swallow_motion = true
